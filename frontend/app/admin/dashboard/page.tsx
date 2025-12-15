@@ -39,19 +39,29 @@ export default function AdminDashboardPage() {
 
     const handleLogout = async () => {
         setLoading(true);
-        // FIX: Uso getApiUrl
-        await fetch(getApiUrl('api/auth/logout'), { 
+        // Remove token from localStorage
+        localStorage.removeItem('admin_token');
+        // Call logout endpoint
+        await fetch(getApiUrl('api/auth/logout'), {
             method: 'POST',
-            credentials: 'include' 
+            credentials: 'include'
         });
         router.push('/admin/login');
     };
 
     const fetchPromotions = useCallback(async () => {
         try {
-            // FIX: Uso getApiUrl
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                router.push('/admin/login');
+                return;
+            }
+
             const res = await fetch(getApiUrl('api/promotions/list'), {
                 method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
                 credentials: 'include'
             });
 
@@ -59,7 +69,7 @@ export default function AdminDashboardPage() {
 
             const data: Promotion[] = await res.json();
             setPromotions(data);
-            
+
             if (data.length > 0 && !selectedPromotionId) {
                  setSelectedPromotionId(data[0].id);
             } else if (data.length > 0 && selectedPromotionId && !data.find(p => p.id === selectedPromotionId)) {
@@ -69,16 +79,25 @@ export default function AdminDashboardPage() {
             console.error(error);
             setPromotions([]);
         }
-    }, [selectedPromotionId]); 
+    }, [selectedPromotionId, router]); 
 
     const checkSession = async () => {
         try {
-            // FIX: Uso getApiUrl with timeout
+            // Check if token exists in localStorage
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                router.push('/admin/login');
+                return;
+            }
+
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
 
             const res = await fetch(getApiUrl('api/auth/me'), {
                 method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
                 credentials: 'include',
                 signal: controller.signal
             });
@@ -89,10 +108,13 @@ export default function AdminDashboardPage() {
                 await fetchPromotions();
                 setLoading(false);
             } else {
+                // Token non valido, rimuovilo e redirect a login
+                localStorage.removeItem('admin_token');
                 router.push('/admin/login');
             }
         } catch (error) {
             console.error('Session check error:', error);
+            localStorage.removeItem('admin_token');
             router.push('/admin/login');
         }
     };
@@ -103,12 +125,20 @@ export default function AdminDashboardPage() {
         setIsCreating(true);
 
         try {
-            // FIX: Uso getApiUrl
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                router.push('/admin/login');
+                return;
+            }
+
             const res = await fetch(getApiUrl('api/promotions/create'), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 credentials: 'include',
-                body: JSON.stringify({ 
+                body: JSON.stringify({
                     name: newName,
                     plannedTokenCount: newCount,
                     startDatetime: newStart,
