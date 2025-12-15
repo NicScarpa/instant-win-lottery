@@ -5,6 +5,8 @@ import React from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
+// Force rebuild timestamp: 2025-12-15T18:15:00Z
+
 interface PlayLog {
     playId: string;
     isWinner: boolean;
