@@ -68,7 +68,13 @@ function PlayContent() {
             });
             const data = await res.json();
             if (res.ok) {
-                setCustomerId(data.customerId); // server.ts restituisce { customerId: ... }
+                setCustomerId(data.customerId); // server.ts restituisce { customerId: ..., token: ... }
+
+                // NUOVO: Salva il JWT token per le richieste successive
+                if (data.token) {
+                    localStorage.setItem('customer_token', data.token);
+                }
+
                 setGameState('READY');
                 if (saveLocal) {
                     localStorage.setItem('campari_user', JSON.stringify({ firstName: fName, lastName: lName, phone: ph }));
@@ -92,14 +98,20 @@ function PlayContent() {
                 
                 const savedUser = localStorage.getItem('campari_user');
                 if (savedUser) {
-                    const user = JSON.parse(savedUser);
-                    setFirstName(user.firstName);
-                    setLastName(user.lastName);
-                    setPhone(user.phone);
-                    // Tentiamo auto-registrazione/login
-                    await registerUser(user.firstName, user.lastName, user.phone, data.promotionId, false, false);
-                } else { 
-                    setGameState('REGISTER'); 
+                    try {
+                        const user = JSON.parse(savedUser);
+                        setFirstName(user.firstName);
+                        setLastName(user.lastName);
+                        setPhone(user.phone);
+                        // Tentiamo auto-registrazione/login
+                        await registerUser(user.firstName, user.lastName, user.phone, data.promotionId, false, false);
+                    } catch (error) {
+                        // JSON corrotto, rimuovi e richiedi registrazione
+                        localStorage.removeItem('campari_user');
+                        setGameState('REGISTER');
+                    }
+                } else {
+                    setGameState('REGISTER');
                 }
             } catch (err) { setGameState('ERROR'); setErrorMessage('Errore connessione.'); }
         };
@@ -118,13 +130,26 @@ function PlayContent() {
         await new Promise(r => setTimeout(r, 1500));
 
         try {
+            // Recupera il JWT token dal localStorage
+            const customerToken = localStorage.getItem('customer_token');
+
+            if (!customerToken) {
+                setGameState('ERROR');
+                setErrorMessage('Sessione scaduta. Registrati di nuovo.');
+                return;
+            }
+
             const res = await fetch(getApiUrl('api/customer/play'), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    promotion_id: Number(promotionId), 
-                    token_code: token, 
-                    customer_id: Number(customerId) 
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${customerToken}` // NUOVO: Invia JWT token
+                },
+                credentials: 'include', // Invia anche i cookie
+                body: JSON.stringify({
+                    promotion_id: Number(promotionId),
+                    token_code: token
+                    // RIMOSSO: customer_id (viene preso dal JWT token dal backend)
                 })
             });
             const data: any = await res.json(); 

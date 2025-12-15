@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: 'https://campari-lottery.onrender.com/api/:path*',
+        destination: 'https://backend-campari-lottery-production.up.railway.app/api/:path*',
       },
     ];
   },
