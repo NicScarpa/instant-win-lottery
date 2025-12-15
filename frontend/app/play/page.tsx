@@ -7,12 +7,10 @@ import confetti from 'canvas-confetti';
 import LegalModal from '../components/LegalModal';
 import LiveLeaderboard from './components/LiveLeaderboard';
 import { LEGAL_TEXTS } from '../lib/legalData';
-import { getApiUrl } from '../lib/api'; // <--- MODIFICA 1: Import aggiunto
+import { getApiUrl } from '../lib/api'; 
 
 // --- COSTANTI DI STILE CAMPARI ---
 const CAMPARI_RED = '#E3001B';
-
-// const API_URL = ... <--- MODIFICA 2: Rimossa costante locale
 
 type GameState = 'LOADING' | 'REGISTER' | 'READY' | 'PLAYING' | 'RESULT' | 'ERROR';
 
@@ -20,7 +18,7 @@ interface PlayResult {
     win: boolean;
     prize: any;
     assignment: any;
-    leaderboard: any[];
+    // leaderboard: any[]; // Non serve più qui, lo gestisce il componente
     userRank: number; 
     userTotalPlays: number; 
 }
@@ -36,8 +34,8 @@ function PlayContent() {
     // Dati
     const [promotionId, setPromotionId] = useState('');
     const [prize, setPrize] = useState<any>(null);
-    const [leaderboard, setLeaderboard] = useState<any[]>([]);
-    const [finalResult, setFinalResult] = useState<PlayResult | null>(null);
+    // const [leaderboard, setLeaderboard] = useState<any[]>([]); // Rimosso
+    // const [finalResult, setFinalResult] = useState<PlayResult | null>(null); // Rimosso uso diretto
 
     // Form
     const [firstName, setFirstName] = useState('');
@@ -56,21 +54,21 @@ function PlayContent() {
     // --- LOGICHE ---
     const registerUser = async (fName: string, lName: string, ph: string, promoId: string, saveLocal: boolean, marketing: boolean) => {
         try {
-            // MODIFICA 3: Uso getApiUrl
             const res = await fetch(getApiUrl('api/customer/register'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    promotion_id: promoId,
-                    phone: ph,
-                    first_name: fName,
-                    last_name: lName,
-                    marketing_consent: marketing 
+                    promotionId: promoId, // Attenzione: il backend si aspetta camelCase o snake_case? Controlliamo server.ts -> promotionId
+                    firstName: fName,
+                    lastName: lName,
+                    phoneNumber: ph,
+                    consentMarketing: marketing,
+                    consentTerms: true
                 })
             });
             const data = await res.json();
             if (res.ok) {
-                setCustomerId(data.id);
+                setCustomerId(data.customerId); // server.ts restituisce { customerId: ... }
                 setGameState('READY');
                 if (saveLocal) {
                     localStorage.setItem('campari_user', JSON.stringify({ firstName: fName, lastName: lName, phone: ph }));
@@ -85,19 +83,24 @@ function PlayContent() {
         if (!token) { setGameState('ERROR'); setErrorMessage('Codice QR mancante.'); return; }
         const validateToken = async () => {
             try {
-                // MODIFICA 4: Uso getApiUrl con query string
-                const res = await fetch(getApiUrl(`api/customer/token/validate?token=${token}`));
+                const res = await fetch(getApiUrl(`api/customer/validate-token/${token}`)); // Endpoint corretto da server.ts
                 const data = await res.json();
-                if (!data.valid) { setGameState('ERROR'); setErrorMessage(data.reason); return; }
-                setPromotionId(data.promotion.id);
+                
+                if (!data.valid) { setGameState('ERROR'); setErrorMessage(data.message); return; }
+                
+                setPromotionId(data.promotionId);
+                
                 const savedUser = localStorage.getItem('campari_user');
                 if (savedUser) {
                     const user = JSON.parse(savedUser);
                     setFirstName(user.firstName);
                     setLastName(user.lastName);
                     setPhone(user.phone);
-                    await registerUser(user.firstName, user.lastName, user.phone, data.promotion.id, false, false);
-                } else { setGameState('REGISTER'); }
+                    // Tentiamo auto-registrazione/login
+                    await registerUser(user.firstName, user.lastName, user.phone, data.promotionId, false, false);
+                } else { 
+                    setGameState('REGISTER'); 
+                }
             } catch (err) { setGameState('ERROR'); setErrorMessage('Errore connessione.'); }
         };
         validateToken();
@@ -111,26 +114,34 @@ function PlayContent() {
 
     const handlePlay = async () => {
         setGameState('PLAYING');
-        await new Promise(r => setTimeout(r, 2000));
+        // Piccolo delay per suspence
+        await new Promise(r => setTimeout(r, 1500));
 
         try {
-            // MODIFICA 5: Uso getApiUrl
             const res = await fetch(getApiUrl('api/customer/play'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ promotion_id: promotionId, token_code: token, customer_id: customerId })
+                body: JSON.stringify({ 
+                    promotion_id: Number(promotionId), 
+                    token_code: token, 
+                    customer_id: Number(customerId) 
+                })
             });
             const data: any = await res.json(); 
+            
             if (res.ok) {
-                const finalData: PlayResult = data;
-                setPrize(finalData.assignment);
-                setLeaderboard(finalData.leaderboard || []);
-                setFinalResult(finalData); 
-                setGameState('RESULT');
-                if (finalData.win) {
+                // data contiene { isWinner, prizeAssignment }
+                if (data.isWinner) {
+                    setPrize(data.prizeAssignment);
                     confetti({ particleCount: 200, spread: 90, origin: { y: 0.6 }, colors: ['#E3001B', '#FFFFFF'] });
+                } else {
+                    setPrize(null);
                 }
-            } else { setGameState('ERROR'); setErrorMessage(data.error); }
+                setGameState('RESULT');
+            } else { 
+                setGameState('ERROR'); 
+                setErrorMessage(data.error || 'Errore di gioco'); 
+            }
         } catch (err) { setGameState('ERROR'); setErrorMessage("Errore di rete."); }
     };
 
@@ -140,23 +151,20 @@ function PlayContent() {
         setModalOpen(true);
     };
 
-    // --- DESIGN SYSTEM CAMPARI ---
-    
-    // Sfondo Rosso con bottiglietta ripetuta
+    // --- DESIGN SYSTEM ---
     const bgStyle = {
         backgroundColor: CAMPARI_RED,
-        // Assicura che bottiglia.png sia in public/
         backgroundImage: `url('/bottiglia.png')`,
-        backgroundSize: '80px', // Dimensione bottiglietta
+        backgroundSize: '80px', 
         backgroundRepeat: 'repeat',
-        backgroundBlendMode: 'soft-light', // Fonde l'immagine col rosso
+        backgroundBlendMode: 'soft-light',
     };
 
     return (
         <div style={bgStyle} className="min-h-screen font-sans text-white pb-12 flex flex-col items-center overflow-x-hidden">
             <LegalModal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={modalContent.title} content={modalContent.text} />
 
-            {/* HEADER LOGO */}
+            {/* HEADER */}
             <header className="pt-8 pb-4 z-10 w-full max-w-xs mx-auto">
                 <img 
                     src="/camparisoda.png" 
@@ -201,14 +209,9 @@ function PlayContent() {
                         <div className="w-24 h-24 bg-[#E3001B] rounded-full mx-auto mb-6 flex items-center justify-center text-5xl shadow-inner border-4 border-black">
                             🎲
                         </div>
-                        
                         <h2 className="text-4xl font-bold uppercase tracking-tighter text-black mb-2 leading-none">CIAO<br/>{firstName}!</h2>
                         <p className="text-gray-600 font-bold mb-8 uppercase text-sm tracking-widest">Il tuo momento è adesso.</p>
-                        
-                        <button 
-                            onClick={handlePlay} 
-                            className="w-full bg-[#E3001B] text-white text-2xl font-bold py-5 border-4 border-black hover:bg-black hover:text-white transition-all uppercase tracking-widest shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none"
-                        >
+                        <button onClick={handlePlay} className="w-full bg-[#E3001B] text-white text-2xl font-bold py-5 border-4 border-black hover:bg-black hover:text-white transition-all uppercase tracking-widest shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none">
                             GIOCA ORA
                         </button>
                     </div>
@@ -232,7 +235,6 @@ function PlayContent() {
                                 <p className="text-xl font-bold uppercase border-b-4 border-black inline-block pb-1 mb-6">
                                     {prize.prize_type?.name}
                                 </p>
-                                
                                 <div className="bg-black p-4 mb-4 inline-block mx-auto border-4 border-black">
                                     <div className="bg-white p-2">
                                         <QRCode value={prize.prize_code} size={160} fgColor="#000000" />
@@ -257,19 +259,15 @@ function PlayContent() {
                             </div>
                         )}
 
-                        {/* CLASSIFICA */}
+                        {/* CLASSIFICA LIVE */}
                         <div className="bg-white text-black p-4 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
                             <h3 className="text-center font-bold uppercase border-b-2 border-black pb-2 mb-2 tracking-widest">Classifica Live</h3>
-                            <LiveLeaderboard entries={leaderboard} currentUserPhone={phone} />
                             
-                            {finalResult && (
-                                <div className="mt-4 pt-2 border-t-2 border-black text-center bg-yellow-50 p-2">
-                                    <p className="uppercase font-bold text-sm">
-                                        TU: <span className="text-[#E3001B] text-lg">POS. {finalResult.userRank}</span>
-                                    </p>
-                                    <p className="text-xs font-mono text-gray-500">Giocate totali: {finalResult.userTotalPlays}</p>
-                                </div>
-                            )}
+                            {/* FIX: Uso corretto del componente con le nuove props */}
+                            <LiveLeaderboard 
+                                promotionId={Number(promotionId)} 
+                                currentCustomerId={Number(customerId)} 
+                            />
                         </div>
                     </div>
                 )}
