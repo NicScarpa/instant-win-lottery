@@ -2,10 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import React from 'react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-
-// Force rebuild timestamp: 2025-12-15T18:15:00Z
+import { getApiUrl } from '../../../lib/api';
 
 interface PlayLog {
     playId: string;
@@ -28,9 +25,17 @@ export default function PlayLogViewer({ promotionId }: { promotionId: string }) 
         setError(null);
 
         try {
-            const res = await fetch(`${API_URL}/api/admin/play-logs/${promotionId}`, {
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                throw new Error('Token non trovato');
+            }
+
+            const res = await fetch(getApiUrl(`api/admin/play-logs/${promotionId}`), {
                 method: 'GET',
                 credentials: 'include',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
             });
 
             if (!res.ok) throw new Error('Errore nel recupero dei log.');

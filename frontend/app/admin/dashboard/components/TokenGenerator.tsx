@@ -2,8 +2,7 @@
 
 import { useState } from 'react';
 import React from 'react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { getApiUrl } from '../../../lib/api';
 
 interface Props {
     promotionId: string;
@@ -34,10 +33,19 @@ export default function TokenGenerator({ promotionId, promotionName, onOperation
         }
 
         try {
-            const res = await fetch(`${API_URL}/api/admin/tokens/reset/${promotionId}`, {
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                setErrorMessage('Token non trovato');
+                return;
+            }
+
+            const res = await fetch(getApiUrl(`api/admin/tokens/reset/${promotionId}`), {
                 method: 'DELETE',
                 credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
             });
 
             const data = await res.json();
@@ -73,9 +81,18 @@ export default function TokenGenerator({ promotionId, promotionName, onOperation
         }
 
         try {
-            const res = await fetch(`${API_URL}/api/admin/tokens/generate`, {
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                setErrorMessage('Token non trovato');
+                return;
+            }
+
+            const res = await fetch(getApiUrl('api/admin/tokens/generate'), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 credentials: 'include',
                 body: JSON.stringify({ promotionId, count }),
             });

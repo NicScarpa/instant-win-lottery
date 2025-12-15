@@ -59,12 +59,20 @@ export default function PromotionSelector({
         }
 
         try {
-            // FIX: Uso getApiUrl
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                setErrorMessage('Token non trovato');
+                return;
+            }
+
             const res = await fetch(getApiUrl('api/promotions/create'), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 credentials: 'include',
-                body: JSON.stringify({ 
+                body: JSON.stringify({
                     name: newName,
                     plannedTokenCount: newPlannedTokenCount,
                     startDatetime: newStartDatetime,
@@ -88,14 +96,22 @@ export default function PromotionSelector({
         setSuccessMessage(''); setErrorMessage('');
         
         try {
-            // FIX: Uso getApiUrl
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                setErrorMessage('Token non trovato');
+                return;
+            }
+
             const res = await fetch(getApiUrl(`api/promotions/update/${currentPromotion.id}`), {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 credentials: 'include',
-                body: JSON.stringify({ 
-                    name, 
-                    plannedTokenCount: parseInt(plannedTokenCount.toString()), 
+                body: JSON.stringify({
+                    name,
+                    plannedTokenCount: parseInt(plannedTokenCount.toString()),
                     status,
                     start_datetime: currentPromotion.start_datetime,
                     end_datetime: currentPromotion.end_datetime,
@@ -117,10 +133,18 @@ export default function PromotionSelector({
         if (!confirm(`ELIMINARE PERMANENTEMENTE "${currentPromotion.name}"?`)) return;
 
         try {
-            // FIX: Uso getApiUrl
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                setErrorMessage('Token non trovato');
+                return;
+            }
+
             const res = await fetch(getApiUrl(`api/promotions/delete/${currentPromotion.id}`), {
                 method: 'DELETE',
                 credentials: 'include',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
             });
             if (res.ok) {
                 setSuccessMessage(`Promozione eliminata.`);

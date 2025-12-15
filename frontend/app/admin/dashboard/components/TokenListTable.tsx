@@ -2,10 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import React from 'react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-
-// Force rebuild timestamp: 2025-12-15T18:15:00Z
+import { getApiUrl } from '../../../lib/api';
 
 interface TokenData {
     id: string;
@@ -31,9 +28,19 @@ export default function TokenListTable({ promotionId }: { promotionId: string })
             setLoading(true);
             setError('');
             try {
-                const res = await fetch(`${API_URL}/api/admin/tokens/${promotionId}`, {
+                const token = localStorage.getItem('admin_token');
+                if (!token) {
+                    setError('Token non trovato');
+                    setLoading(false);
+                    return;
+                }
+
+                const res = await fetch(getApiUrl(`api/admin/tokens/${promotionId}`), {
                     method: 'GET',
                     credentials: 'include',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
                 });
 
                 if (res.ok) {

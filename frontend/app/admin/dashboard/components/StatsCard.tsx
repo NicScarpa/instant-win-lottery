@@ -2,8 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import React from 'react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { getApiUrl } from '../../../lib/api';
 
 interface PrizeDetail {
     name: string;
@@ -40,10 +39,18 @@ export default function StatsCard({ promotionId }: { promotionId: string }) {
         }
 
         try {
-            const res = await fetch(`${API_URL}/api/admin/stats/${promotionId}`, {
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                throw new Error('Token non trovato');
+            }
+
+            const res = await fetch(getApiUrl(`api/admin/stats/${promotionId}`), {
                 method: 'GET',
                 credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
             });
 
             if (!res.ok) {

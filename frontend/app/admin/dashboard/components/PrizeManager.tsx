@@ -2,8 +2,7 @@
 
 import { useState } from 'react';
 import React from 'react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { getApiUrl } from '../../../lib/api';
 
 interface Props {
     promotionId: string;
@@ -38,14 +37,23 @@ export default function PrizeManager({ promotionId, promotionName, onPrizeChange
         }
 
         try {
-            const res = await fetch(`${API_URL}/api/admin/prizes/add`, {
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                setErrorMessage('Token non trovato');
+                return;
+            }
+
+            const res = await fetch(getApiUrl('api/admin/prizes/add'), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 credentials: 'include',
-                body: JSON.stringify({ 
-                    promotionId: promotionId, 
-                    name: name, 
-                    initialStock: initialStock 
+                body: JSON.stringify({
+                    promotionId: promotionId,
+                    name: name,
+                    initialStock: initialStock
                 }),
             });
 
