@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Scanner } from '@yudiel/react-qr-scanner';
+import { getApiUrl } from '../lib/api'; // <--- MODIFICA: Import getApiUrl
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+// RIMOZIONE: Rimosso API_URL locale, usiamo solo getApiUrl
 
 type ScanStatus = 'IDLE' | 'SCANNING' | 'PROCESSING' | 'SUCCESS' | 'ERROR' | 'WARNING';
 
@@ -17,11 +18,17 @@ export default function StaffPage() {
 
     // 1. Check Sessione (Staff/Admin)
     useEffect(() => {
-        fetch(`${API_URL}/api/auth/me`, { credentials: 'include' })
+        // MODIFICA: Uso getApiUrl
+        fetch(getApiUrl('api/auth/me'), { credentials: 'include' })
             .then(res => {
-                if (!res.ok) router.push('/admin/login'); // Usa lo stesso login dell'admin
+                if (!res.ok) router.push('/admin/login'); // Se non loggato, reindirizza
             })
-            .catch(() => router.push('/admin/login'));
+            .catch((err) => {
+                // In caso di errore di connessione, si può decidere se bloccare o lasciare
+                console.error("Connection error during session check:", err);
+                // Non reindirizziamo forzatamente in caso di errore di rete, ma l'utente non potrà fare operazioni API
+                // Se non rileva una sessione OK, il form sarà comunque inutile
+            });
     }, [router]);
 
     // 2. Gestione Scansione QR
@@ -46,12 +53,16 @@ export default function StaffPage() {
     // 4. Logica di Riscatto (Chiamata Backend)
     const processCode = async (code: string) => {
         setStatus('PROCESSING');
+        setResultMessage('');
+        setResultDetails(null);
+
         try {
-            const res = await fetch(`${API_URL}/api/staff/redeem`, {
+            // MODIFICA: Uso getApiUrl
+            const res = await fetch(getApiUrl('api/staff/redeem'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ prize_code: code })
+                credentials: 'include', // Necessario per inviare il cookie JWT di Staff
+                body: JSON.stringify({ prizeCode: code })
             });
 
             const data = await res.json();
@@ -60,28 +71,29 @@ export default function StaffPage() {
                 // SUCCESSO: Premio valido e bruciato ora
                 setStatus('SUCCESS');
                 setResultDetails(data);
-                playAudio('success');
+                // playAudio('success'); // Funzione non implementata, lasciata come commento
             } else {
-                // ERRORE o GIÀ RITIRATO
+                // ERRORE o GIÀ RITIRATO (Assumiamo che il backend dia dettagli sul 400)
                 if (res.status === 400 && data.redeemedAt) {
                     setStatus('WARNING'); // Già ritirato
                     setResultDetails(data);
-                    playAudio('error');
+                    // playAudio('error');
                 } else {
-                    setStatus('ERROR'); // Codice non esiste
+                    setStatus('ERROR'); // Codice non valido o altro errore
                     setResultMessage(data.error || 'Codice non valido');
-                    playAudio('error');
+                    // playAudio('error');
                 }
             }
         } catch (error) {
             setStatus('ERROR');
             setResultMessage('Errore di connessione al server.');
+            console.error(error);
         }
     };
 
-    // Helper Audio (Opzionale, per feedback immediato)
+    // Helper Audio (Opzionale, non implementato)
     const playAudio = (type: 'success' | 'error') => {
-        // Qui potresti aggiungere un suono "beep"
+        // Implementazione audio (se necessario)
     };
 
     const resetScanner = () => {
@@ -105,28 +117,33 @@ export default function StaffPage() {
             <main className="flex-grow flex flex-col items-center justify-start p-4 relative">
                 
                 {/* MODALITÀ SCANSIONE */}
-                {status === 'SCANNING' || status === 'PROCESSING' ? (
+                {(status === 'SCANNING' || status === 'PROCESSING' || status === 'IDLE') && (
                     <div className="w-full max-w-md space-y-6">
                         <div className="text-center mb-2">
                             <p className="text-gray-300 text-sm">Inquadra il QR Code del cliente</p>
                         </div>
                         
                         <div className="relative overflow-hidden rounded-xl border-2 border-red-500 shadow-2xl bg-black aspect-square">
-                            <Scanner 
-                                onScan={handleScan} 
-                                styles={{ container: { width: '100%', height: '100%' } }}
-                                // FIX: Rimosso 'audio: false' che causava l'errore TS
-                                components={{ finder: false }} 
-                            />
-                            {/* Overlay grafico mirino */}
-                            <div className="absolute inset-0 border-[40px] border-black/50 flex items-center justify-center pointer-events-none">
-                                <div className="w-64 h-64 border-4 border-red-500/50 rounded-lg"></div>
-                            </div>
+                            {/* Mostra Scanner solo in stato 'SCANNING' */}
+                            {status === 'SCANNING' && (
+                                <Scanner 
+                                    onScan={handleScan} 
+                                    styles={{ container: { width: '100%', height: '100%' } }}
+                                    components={{ finder: false }} 
+                                />
+                            )}
+
+                            {/* Stato di Processing */}
                             {status === 'PROCESSING' && (
                                 <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-20">
                                     <div className="animate-spin w-10 h-10 border-4 border-red-600 border-t-transparent rounded-full"></div>
                                 </div>
                             )}
+
+                            {/* Overlay grafico mirino */}
+                            <div className="absolute inset-0 border-[40px] border-black/50 flex items-center justify-center pointer-events-none">
+                                <div className="w-64 h-64 border-4 border-red-500/50 rounded-lg"></div>
+                            </div>
                         </div>
 
                         <div className="text-center">
@@ -143,7 +160,7 @@ export default function StaffPage() {
                             </form>
                         </div>
                     </div>
-                ) : null}
+                )}
 
                 {/* SCHERMATA SUCCESSO (VERDE) */}
                 {status === 'SUCCESS' && (
@@ -155,8 +172,8 @@ export default function StaffPage() {
                         <p className="text-green-100 text-lg mb-8">Consegna al cliente:</p>
                         
                         <div className="bg-white text-green-900 p-6 rounded-xl shadow-lg w-full max-w-sm mb-8">
-                            <h3 className="text-2xl font-bold break-words">{resultDetails?.prize}</h3>
-                            <p className="text-sm text-gray-500 mt-2">Ritirato il: {new Date(resultDetails?.redeemedAt).toLocaleString()}</p>
+                            <h3 className="text-2xl font-bold break-words">{resultDetails?.prizeType}</h3>
+                            <p className="text-sm text-gray-500 mt-2">Ritirato il: {resultDetails?.redeemedAt ? new Date(resultDetails.redeemedAt).toLocaleString() : 'Ora'}</p>
                         </div>
 
                         <button onClick={resetScanner} className="bg-green-800 text-white px-10 py-4 rounded-full font-bold text-xl shadow-lg hover:bg-green-900 transition">
@@ -175,8 +192,8 @@ export default function StaffPage() {
                         <p className="text-yellow-100 font-medium mb-8">Questo premio è già stato consegnato.</p>
                         
                         <div className="bg-white/90 text-yellow-900 p-6 rounded-xl shadow-lg w-full max-w-sm mb-8 text-left text-sm">
-                            <p><strong>Premio:</strong> {resultDetails?.prize}</p>
-                            <p><strong>Data Ritiro:</strong> {new Date(resultDetails?.redeemedAt).toLocaleString()}</p>
+                            <p><strong>Premio:</strong> {resultDetails?.prizeType}</p>
+                            <p><strong>Data Ritiro:</strong> {resultDetails?.redeemedAt ? new Date(resultDetails.redeemedAt).toLocaleString() : 'N/D'}</p>
                             <p><strong>Staff:</strong> {resultDetails?.redeemedBy || 'N/D'}</p>
                         </div>
 

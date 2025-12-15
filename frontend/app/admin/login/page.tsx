@@ -1,9 +1,7 @@
-// frontend/app/admin/login/page.tsx
 'use client';
-import { useState, useEffect } from 'react'; // AGGIUNTO useEffect
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { getApiUrl } from '../../lib/api'; // <--- MODIFICA: Import getApiUrl
 
 // NOTA BENE: "export default" è obbligatorio qui!
 export default function LoginPage() {
@@ -14,26 +12,34 @@ export default function LoginPage() {
   const router = useRouter();
 
   // -------------------------------------------------------------------
-  // NUOVA FUNZIONE: CONTROLLO SESSIONE INVERSO (PER EVITARE IL LOOP)
+  // CONTROLLO SESSIONE INVERSO
   // -------------------------------------------------------------------
   useEffect(() => {
     const checkSession = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/auth/me`, {
+        // MODIFICA: Uso getApiUrl
+        const res = await fetch(getApiUrl('api/auth/me'), {
           method: 'GET',
           credentials: 'include' 
         });
 
         if (res.ok) {
+          const data = await res.json();
           // Se la sessione è valida, reindirizza IMMEDIATAMENTE alla dashboard.
-          router.replace('/admin/dashboard'); // Usiamo replace per non salvare la pagina di login nella cronologia
+          if (data.user.role === 'admin') {
+            router.replace('/admin/dashboard'); 
+          } else {
+            router.replace('/staff'); // Presumo che la dashboard staff sia su /staff
+          }
         } else {
           // Se 401/403/errore, mostra il form.
           setLoading(false); 
         }
       } catch (err) {
-        // Errore di connessione (server spento)
+        // Errore di connessione (server spento o errore di rete)
+        console.error("Errore di connessione alla API:", err);
         setLoading(false); 
+        // Potresti voler mostrare un messaggio di errore di connessione qui, ma per ora lo lasciamo silenzioso.
       }
     };
     
@@ -46,11 +52,11 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
 
-    // Il controllo apiUrl è già corretto nel file
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+    // RIMOZIONE: Rimosso apiUrl locale, usiamo solo getApiUrl
 
     try {
-      const res = await fetch(`${apiUrl}/api/auth/login`, {
+      // MODIFICA: Uso getApiUrl
+      const res = await fetch(getApiUrl('api/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include', // Necessario per inviare e ricevere il cookie JWT
@@ -61,10 +67,10 @@ export default function LoginPage() {
 
       if (res.ok) {
         // Login riuscito! Reindirizza solo dopo l'impostazione del cookie
-        if (data.user.role === 'ADMIN') {
-          router.replace('/admin/dashboard'); // Usiamo replace anche qui
+        if (data.role === 'admin') { // Ho corretto da data.user.role a data.role in base al server.ts
+          router.replace('/admin/dashboard'); 
         } else {
-          router.replace('/staff/dashboard'); 
+          router.replace('/staff'); 
         }
       } else {
         setError(data.error || 'Credenziali non valide');

@@ -7,11 +7,12 @@ import confetti from 'canvas-confetti';
 import LegalModal from '../components/LegalModal';
 import LiveLeaderboard from './components/LiveLeaderboard';
 import { LEGAL_TEXTS } from '../lib/legalData';
+import { getApiUrl } from '../lib/api'; // <--- MODIFICA 1: Import aggiunto
 
 // --- COSTANTI DI STILE CAMPARI ---
 const CAMPARI_RED = '#E3001B';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+// const API_URL = ... <--- MODIFICA 2: Rimossa costante locale
 
 type GameState = 'LOADING' | 'REGISTER' | 'READY' | 'PLAYING' | 'RESULT' | 'ERROR';
 
@@ -52,10 +53,11 @@ function PlayContent() {
     const [modalOpen, setModalOpen] = useState(false);
     const [modalContent, setModalContent] = useState({ title: '', text: '' });
 
-    // --- LOGICHE (Invariate) ---
+    // --- LOGICHE ---
     const registerUser = async (fName: string, lName: string, ph: string, promoId: string, saveLocal: boolean, marketing: boolean) => {
         try {
-            const res = await fetch(`${API_URL}/api/customer/register`, {
+            // MODIFICA 3: Uso getApiUrl
+            const res = await fetch(getApiUrl('api/customer/register'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -83,7 +85,8 @@ function PlayContent() {
         if (!token) { setGameState('ERROR'); setErrorMessage('Codice QR mancante.'); return; }
         const validateToken = async () => {
             try {
-                const res = await fetch(`${API_URL}/api/customer/token/validate?token=${token}`);
+                // MODIFICA 4: Uso getApiUrl con query string
+                const res = await fetch(getApiUrl(`api/customer/token/validate?token=${token}`));
                 const data = await res.json();
                 if (!data.valid) { setGameState('ERROR'); setErrorMessage(data.reason); return; }
                 setPromotionId(data.promotion.id);
@@ -111,7 +114,8 @@ function PlayContent() {
         await new Promise(r => setTimeout(r, 2000));
 
         try {
-            const res = await fetch(`${API_URL}/api/customer/play`, {
+            // MODIFICA 5: Uso getApiUrl
+            const res = await fetch(getApiUrl('api/customer/play'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ promotion_id: promotionId, token_code: token, customer_id: customerId })
