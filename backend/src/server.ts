@@ -137,9 +137,6 @@ app.put('/api/promotions/update/:id', authenticateToken, authorizeRole('admin'),
 app.delete('/api/promotions/delete/:id', authenticateToken, authorizeRole('admin'), async (req, res) => {
     const { id } = req.params;
     try {
-        // Nota: Le constraint del DB potrebbero bloccare l'eliminazione se ci sono dati collegati.
-        // Prisma gestisce il cascade se configurato nello schema, altrimenti va fatto a mano.
-        // Per semplicità assumiamo che il cascade sia gestito o che la promo sia vuota.
         await prisma.token.deleteMany({ where: { promotion_id: Number(id) } });
         await prisma.prizeType.deleteMany({ where: { promotion_id: Number(id) } });
         await prisma.promotion.delete({ where: { id: Number(id) } });
@@ -168,10 +165,8 @@ app.get('/api/admin/prizes/:promotionId', authenticateToken, authorizeRole('admi
 });
 
 app.post('/api/admin/prizes/update', authenticateToken, authorizeRole('admin'), async (req, res) => {
-    const { promotionId, prizeTypes } = req.body; // prizeTypes è un array
+    const { promotionId, prizeTypes } = req.body; 
     try {
-        // Esempio semplice: elimina e ricrea (o upsert). 
-        // Qui facciamo un ciclo di upsert per semplicità
         for (const p of prizeTypes) {
             if (p.id) {
                 await prisma.prizeType.update({
@@ -179,7 +174,7 @@ app.post('/api/admin/prizes/update', authenticateToken, authorizeRole('admin'), 
                     data: {
                         name: p.name,
                         initial_stock: Number(p.initial_stock),
-                        remaining_stock: Number(p.remaining_stock), // O calcolato
+                        remaining_stock: Number(p.remaining_stock),
                         target_overall_probability: Number(p.target_overall_probability)
                     }
                 });
@@ -203,7 +198,7 @@ app.post('/api/admin/prizes/update', authenticateToken, authorizeRole('admin'), 
 });
 
 // ==========================================
-// 4. ADMIN: STATS & LOGS
+// 4. ADMIN: STATS & LOGS (CORRETTO QUI)
 // ==========================================
 
 app.get('/api/admin/stats/:promotionId', authenticateToken, authorizeRole('admin'), async (req, res) => {
@@ -216,7 +211,6 @@ app.get('/api/admin/stats/:promotionId', authenticateToken, authorizeRole('admin
         const uniquePlayers = await prisma.customer.count({ where: { promotion_id: pid } });
         const wins = await prisma.play.count({ where: { promotion_id: pid, is_winner: true } });
         
-        // Calcolo premi assegnati vs totali
         const prizes = await prisma.prizeType.findMany({ where: { promotion_id: pid } });
         const totalStock = prizes.reduce((acc, p) => acc + p.initial_stock, 0);
         const remainingStock = prizes.reduce((acc, p) => acc + p.remaining_stock, 0);
@@ -224,7 +218,7 @@ app.get('/api/admin/stats/:promotionId', authenticateToken, authorizeRole('admin
         res.json({
             tokens: { total: totalTokens, used: usedTokens },
             plays: { total: totalPlays, unique_players: uniquePlayers },
-            prizes: { total: totalStock, awarded: wins, remaining: remainingStock } // Approx wins = awarded
+            prizes: { total: totalStock, awarded: wins, remaining: remainingStock }
         });
     } catch (err) {
         res.status(500).json({ error: 'Errore statistiche' });
@@ -239,31 +233,32 @@ app.get('/api/admin/play-logs/:promotionId', authenticateToken, authorizeRole('a
             include: {
                 customer: true,
                 token: true,
-                prize_assignments: { include: { prize_type: true } }
+                prize_assignment: { include: { prize_type: true } } // CORRETTO: Singolare
             },
-            orderBy: { played_at: 'desc' },
-            take: 50 // Ultimi 50
+            orderBy: { created_at: 'desc' }, // CORRETTO: created_at, non played_at
+            take: 50 
         });
         
         // Formattazione per frontend
         const formatted = logs.map(l => ({
             id: l.id,
-            timestamp: l.played_at,
+            timestamp: l.created_at, // CORRETTO
             customerName: `${l.customer.first_name} ${l.customer.last_name}`,
             phone: l.customer.phone_number,
-            result: l.is_winner ? (l.prize_assignments[0]?.prize_type.name || 'Vincita (Errore ref)') : 'Non vincente',
+            result: l.is_winner ? (l.prize_assignment?.prize_type.name || 'Vincita (Errore ref)') : 'Non vincente',
             token: l.token.token_code
         }));
 
         res.json(formatted);
     } catch (err) {
+        console.error(err); // Aggiunto log errore
         res.status(500).json({ error: 'Errore logs' });
     }
 });
 
 app.get('/api/admin/tokens/:promotionId', authenticateToken, authorizeRole('admin'), async (req, res) => {
     const { promotionId } = req.params;
-    const { page = 1, limit = 50, search = '' } = req.query; // Paginazione base
+    const { page = 1, limit = 50, search = '' } = req.query; 
     
     try {
         const tokens = await prisma.token.findMany({
@@ -275,7 +270,7 @@ app.get('/api/admin/tokens/:promotionId', authenticateToken, authorizeRole('admi
             take: Number(limit),
             skip: (Number(page) - 1) * Number(limit)
         });
-        res.json({ tokens, total: 0 }); // Total da implementare se serve paginazione vera
+        res.json({ tokens, total: 0 }); 
     } catch (err) {
         res.status(500).json({ error: 'Errore tokens' });
     }
@@ -296,7 +291,6 @@ app.post('/api/admin/generate-tokens', authenticateToken, authorizeRole('admin')
         });
     }
 
-    // Nota: createMany non è supportato su SQLite, ma su Postgres (Railway) sì.
     await prisma.token.createMany({
         data: codesToCreate,
         skipDuplicates: true
