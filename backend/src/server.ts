@@ -70,7 +70,7 @@ app.post('/api/auth/login', async (req, res) => {
       maxAge: 8 * 3600 * 1000
     });
 
-    res.json({ success: true, role: user.role });
+    res.json({ success: true, role: user.role, token: token });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Login failed' });
