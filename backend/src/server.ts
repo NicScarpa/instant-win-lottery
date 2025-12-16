@@ -30,6 +30,43 @@ if (JWT_SECRET === 'super-secret-key-change-in-prod' || JWT_SECRET === 'chiave_s
   process.exit(1);
 }
 
+// --- UTILITY FUNCTIONS: VALIDAZIONE INPUT ---
+
+// Validazione numero di telefono italiano (accetta formati comuni)
+const isValidPhoneNumber = (phone: string): boolean => {
+  if (!phone || typeof phone !== 'string') return false;
+  // Rimuove spazi e caratteri non numerici tranne +
+  const cleaned = phone.replace(/[\s\-\(\)]/g, '');
+  // Accetta numeri italiani: +39xxx, 39xxx, 3xxx (min 9, max 15 cifre)
+  const phoneRegex = /^(\+?39)?[0-9]{9,12}$/;
+  return phoneRegex.test(cleaned);
+};
+
+// Sanifica numero di telefono (mantiene solo cifre)
+const sanitizePhoneNumber = (phone: string): string => {
+  return phone.replace(/[^0-9]/g, '');
+};
+
+// Validazione data ISO
+const isValidISODate = (dateStr: string): boolean => {
+  if (!dateStr || typeof dateStr !== 'string') return false;
+  const date = new Date(dateStr);
+  return !isNaN(date.getTime());
+};
+
+// Validazione array prizeTypes
+const isValidPrizeTypesArray = (prizeTypes: unknown): boolean => {
+  if (!Array.isArray(prizeTypes)) return false;
+  return prizeTypes.every(p =>
+    typeof p === 'object' &&
+    p !== null &&
+    typeof p.name === 'string' &&
+    p.name.trim().length > 0 &&
+    typeof p.initial_stock === 'number' &&
+    p.initial_stock >= 0
+  );
+};
+
 // Configurazione CORS
 app.use(cors({
   origin: [
@@ -328,14 +365,17 @@ app.get('/api/admin/play-logs/:promotionId', authenticateToken, authorizeRole('a
             take: 50 
         });
         
-        // Formattazione per frontend
+        // Formattazione per frontend (allineato con PlayLogViewer interface)
         const formatted = logs.map(l => ({
-            id: l.id,
-            timestamp: l.created_at, // CORRETTO
-            customerName: `${l.customer.first_name} ${l.customer.last_name}`,
-            phone: l.customer.phone_number,
-            result: l.is_winner ? (l.prize_assignment?.prize_type.name || 'Vincita (Errore ref)') : 'Non vincente',
-            token: l.token.token_code
+            playId: String(l.id),
+            date: l.created_at.toISOString(),
+            firstName: l.customer.first_name,
+            lastName: l.customer.last_name,
+            phoneNumber: l.customer.phone_number,
+            isWinner: l.is_winner,
+            tokenCode: l.token.token_code,
+            // Campi extra per compatibilità
+            prizeName: l.is_winner ? (l.prize_assignment?.prize_type.name || null) : null
         }));
 
         res.json(formatted);
@@ -381,6 +421,67 @@ app.get('/api/admin/tokens/:promotionId', authenticateToken, authorizeRole('admi
     } catch (err) {
         console.error('Errore fetch tokens:', err);
         res.status(500).json({ error: 'Errore tokens' });
+    }
+});
+
+// Reset Token - Elimina tutti i token e le giocate di una promozione
+app.delete('/api/admin/tokens/reset/:promotionId', authenticateToken, authorizeRole('admin'), async (req, res) => {
+    const { promotionId } = req.params;
+    const pid = Number(promotionId);
+
+    if (!pid || isNaN(pid)) {
+        return res.status(400).json({ error: 'ID promozione non valido' });
+    }
+
+    try {
+        // Esegui tutto in una transazione per garantire consistenza
+        const result = await prisma.$transaction(async (tx) => {
+            // 1. Elimina prima i PrizeAssignment (dipende da Token e Play)
+            const deletedAssignments = await tx.prizeAssignment.deleteMany({
+                where: { promotion_id: pid }
+            });
+
+            // 2. Elimina le Play (dipende da Token)
+            const deletedPlays = await tx.play.deleteMany({
+                where: { promotion_id: pid }
+            });
+
+            // 3. Elimina i Token
+            const deletedTokens = await tx.token.deleteMany({
+                where: { promotion_id: pid }
+            });
+
+            // 4. Reset dello stock dei premi (riporta remaining_stock a initial_stock)
+            const prizeTypes = await tx.prizeType.findMany({
+                where: { promotion_id: pid }
+            });
+            for (const prize of prizeTypes) {
+                await tx.prizeType.update({
+                    where: { id: prize.id },
+                    data: { remaining_stock: prize.initial_stock }
+                });
+            }
+
+            // 5. Reset total_plays dei customer di questa promozione
+            await tx.customer.updateMany({
+                where: { promotion_id: pid },
+                data: { total_plays: 0 }
+            });
+
+            return {
+                deletedTokens: deletedTokens.count,
+                deletedPlays: deletedPlays.count,
+                deletedAssignments: deletedAssignments.count
+            };
+        });
+
+        res.json({
+            message: `Reset completato: ${result.deletedTokens} token, ${result.deletedPlays} giocate e ${result.deletedAssignments} premi assegnati eliminati.`,
+            ...result
+        });
+    } catch (err) {
+        console.error('Errore reset tokens:', err);
+        res.status(500).json({ error: 'Errore durante il reset dei token' });
     }
 });
 
@@ -487,12 +588,19 @@ app.post('/api/customer/check-phone', async (req, res) => {
     return res.status(400).json({ error: 'Missing promotionId or phoneNumber' });
   }
 
+  // Validazione formato telefono
+  if (!isValidPhoneNumber(phoneNumber)) {
+    return res.status(400).json({ error: 'Formato numero di telefono non valido' });
+  }
+
+  const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
+
   try {
     const customer = await prisma.customer.findUnique({
       where: {
         promotion_id_phone_number: {
           promotion_id: Number(promotionId),
-          phone_number: phoneNumber
+          phone_number: sanitizedPhone
         }
       },
       select: {
@@ -519,17 +627,24 @@ app.post('/api/customer/check-phone', async (req, res) => {
 // Register
 app.post('/api/customer/register', async (req, res) => {
   const { promotionId, firstName, lastName, phoneNumber, consentMarketing, consentTerms } = req.body;
-  
+
   if (!promotionId || !firstName || !lastName || !phoneNumber) {
     return res.status(400).json({ error: 'Missing fields' });
   }
+
+  // Validazione formato telefono
+  if (!isValidPhoneNumber(phoneNumber)) {
+    return res.status(400).json({ error: 'Formato numero di telefono non valido' });
+  }
+
+  const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
 
   try {
     const customer = await prisma.customer.upsert({
       where: {
         promotion_id_phone_number: {
           promotion_id: Number(promotionId),
-          phone_number: phoneNumber
+          phone_number: sanitizedPhone
         }
       },
       update: {
@@ -544,7 +659,7 @@ app.post('/api/customer/register', async (req, res) => {
         promotion_id: Number(promotionId),
         first_name: firstName,
         last_name: lastName,
-        phone_number: phoneNumber,
+        phone_number: sanitizedPhone,
         consent_marketing: consentMarketing || false,
         consent_terms: consentTerms || false,
         marketing_consent_at: consentMarketing ? new Date() : null,

@@ -25,6 +25,7 @@ export default function AdminDashboardPage() {
     const [promotions, setPromotions] = useState<Promotion[]>([]);
     const [selectedPromotionId, setSelectedPromotionId] = useState<string>('');
     const [dataRefreshKey, setDataRefreshKey] = useState(0);
+    const [currentView, setCurrentView] = useState('dashboard'); // SPOSTATO QUI: deve stare prima di ogni return condizionale
 
     // Stati per il form di creazione "Bootstrap"
     const [newName, setNewName] = useState('');
@@ -250,15 +251,6 @@ export default function AdminDashboardPage() {
     const currentPromotion = promotions.find(p => p.id === selectedPromotionId) || promotions[0];
 
     if (!currentPromotion) return <div>Errore stato dashboard. Ricarica la pagina.</div>;
-
-    // State for view navigation
-    const [currentView, setCurrentView] = useState('dashboard');
-
-    // IMPORT SIDEBAR (assumed to be imported at top, adding logic here for completeness of context in thought process but in replace block I act on existing content)
-    // Actually I need to add the import first. But I can do it in one go if I replace the whole file or a large chunk.
-    // Let's replace the whole file because the structure changes significantly.
-
-    // ... logic remains ...
 
     return (
         <div className="flex bg-[#F5F5F7] min-h-screen font-sans overflow-hidden">
