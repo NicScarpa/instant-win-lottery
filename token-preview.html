@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Ticket Campari Soda - Preview Nuovo Design</title>
+    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@600;700&family=Roboto+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --campari-red: #D31418;
+            --card-width: 50mm;
+            --card-height: 80mm;
+        }
+
+        /* Reset e impostazioni di stampa */
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            font-family: 'Oswald', sans-serif;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
+        h1 {
+            font-family: 'Oswald', sans-serif;
+            color: var(--campari-red);
+            margin-bottom: 10px;
+        }
+
+        .info {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .info p {
+            margin: 5px 0;
+            font-family: system-ui, sans-serif;
+            font-size: 14px;
+        }
+
+        .preview-container {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .card-wrapper {
+            text-align: center;
+        }
+
+        .card-label {
+            font-family: system-ui, sans-serif;
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        /* --- STILE CARD GENERALE --- */
+        .ticket {
+            width: var(--card-width);
+            height: var(--card-height);
+            position: relative;
+            overflow: hidden;
+            box-sizing: border-box;
+            background: white;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        /* --- PATTERN DI SFONDO (COMUNE) --- */
+        .pattern-bg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('frontend/public/bottiglia.png');
+            background-size: 12mm auto;
+            background-repeat: repeat;
+            background-position: center;
+            z-index: 0;
+        }
+
+        /* --- FRONTE --- */
+        .ticket.front {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #e0e0e0;
+            padding-bottom: 5mm;
+            position: relative;
+        }
+
+        /* Stile specifico pattern su sfondo BIANCO (Fronte) */
+        .ticket.front .pattern-bg {
+            filter: grayscale(1) opacity(0.06);
+            transform: rotate(-5deg) scale(1.2);
+        }
+
+        .header-text {
+            color: var(--campari-red);
+            font-size: 20pt;
+            line-height: 0.9;
+            text-align: center;
+            font-weight: 700;
+            margin-top: 5mm;
+            margin-bottom: 4mm;
+            text-transform: uppercase;
+            letter-spacing: -0.5px;
+            z-index: 2;
+        }
+
+        .qr-code {
+            width: 30mm;
+            height: 30mm;
+            z-index: 2;
+            margin-bottom: 2mm;
+            background: white;
+            padding: 2mm;
+        }
+
+        .token-code {
+            font-family: 'Roboto Mono', monospace;
+            font-size: 11pt;
+            color: #000;
+            z-index: 2;
+            letter-spacing: 1px;
+            background: white;
+            padding: 2px 5px;
+            margin-top: 2mm;
+        }
+
+        /* Triangolo decorativo angolo */
+        .corner-triangle {
+            position: absolute;
+            bottom: -30px;
+            right: -30px;
+            width: 60px;
+            height: 60px;
+            background-color: var(--campari-red);
+            transform: rotate(45deg);
+            z-index: 1;
+        }
+
+        /* --- RETRO --- */
+        .ticket.back {
+            background-color: var(--campari-red);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        /* Stile specifico pattern su sfondo ROSSO (Retro) */
+        .ticket.back .pattern-bg {
+            filter: brightness(0.7) opacity(0.3);
+            transform: rotate(-5deg) scale(1.2);
+        }
+
+        .logo-center {
+            width: 40mm;
+            height: auto;
+            position: relative;
+            z-index: 10;
+        }
+
+        /* --- PRINT MEDIA QUERIES --- */
+        @media print {
+            body { padding: 0; background: none; }
+            .preview-container { gap: 0; display: block; }
+            .ticket {
+                box-shadow: none;
+                page-break-inside: avoid;
+                margin: 0;
+                float: left;
+            }
+            h1, .info, .card-label { display: none; }
+        }
+
+        /* Griglia di stampa simulazione A4 */
+        .print-preview {
+            background: white;
+            width: 210mm;
+            height: 297mm;
+            margin: 40px auto;
+            padding: 10mm;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.15);
+            display: grid;
+            grid-template-columns: repeat(4, var(--card-width));
+            grid-template-rows: repeat(3, var(--card-height));
+            gap: 0;
+            justify-content: center;
+            align-content: center;
+        }
+
+        .print-preview .ticket {
+            box-shadow: none;
+            border: 0.5px dashed #ccc;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Preview Nuovo Design Token - Campari Soda</h1>
+
+<div class="info">
+    <p><strong>Dimensioni card:</strong> 50mm x 80mm (verticale)</p>
+    <p><strong>Layout A4:</strong> 4 colonne x 3 righe = 12 token per pagina</p>
+    <p><strong>Font:</strong> Oswald Bold (titolo), Roboto Mono (codice)</p>
+    <p><strong>Colore Campari:</strong> #D31418</p>
+</div>
+
+<h2 style="font-family: system-ui; color: #333; margin-top: 30px;">Singoli Token (Fronte e Retro)</h2>
+
+<div class="preview-container">
+    <div class="card-wrapper">
+        <div class="card-label">FRONTE</div>
+        <div class="ticket front">
+            <div class="pattern-bg"></div>
+            <div class="header-text">SCANSIONA<br>E VINCI</div>
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://campari-lottery.vercel.app/play?token=ABC123" class="qr-code" alt="QR Code">
+            <div class="token-code">ABC123</div>
+            <div class="corner-triangle"></div>
+        </div>
+    </div>
+
+    <div class="card-wrapper">
+        <div class="card-label">RETRO</div>
+        <div class="ticket back">
+            <div class="pattern-bg"></div>
+            <img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Campari Soda">
+        </div>
+    </div>
+</div>
+
+<h2 style="font-family: system-ui; color: #333; margin-top: 50px;">Simulazione Pagina A4 - Fronte</h2>
+
+<div class="print-preview">
+    <!-- Riga 1 -->
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN001" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN001</div>
+        <div class="corner-triangle"></div>
+    </div>
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN002" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN002</div>
+        <div class="corner-triangle"></div>
+    </div>
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN003" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN003</div>
+        <div class="corner-triangle"></div>
+    </div>
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN004" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN004</div>
+        <div class="corner-triangle"></div>
+    </div>
+    <!-- Riga 2 -->
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN005" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN005</div>
+        <div class="corner-triangle"></div>
+    </div>
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN006" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN006</div>
+        <div class="corner-triangle"></div>
+    </div>
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN007" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN007</div>
+        <div class="corner-triangle"></div>
+    </div>
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN008" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN008</div>
+        <div class="corner-triangle"></div>
+    </div>
+    <!-- Riga 3 -->
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN009" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN009</div>
+        <div class="corner-triangle"></div>
+    </div>
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN010" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN010</div>
+        <div class="corner-triangle"></div>
+    </div>
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN011" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN011</div>
+        <div class="corner-triangle"></div>
+    </div>
+    <div class="ticket front">
+        <div class="pattern-bg"></div>
+        <div class="header-text">SCANSIONA<br>E VINCI</div>
+        <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=TOKEN012" class="qr-code" alt="QR">
+        <div class="token-code">TOKEN012</div>
+        <div class="corner-triangle"></div>
+    </div>
+</div>
+
+<h2 style="font-family: system-ui; color: #333; margin-top: 50px;">Simulazione Pagina A4 - Retro</h2>
+
+<div class="print-preview">
+    <!-- 12 retri -->
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+    <div class="ticket back"><div class="pattern-bg"></div><img src="frontend/public/logocamparisoda_bianco.png" class="logo-center" alt="Logo"></div>
+</div>
+
+</body>
+</html>
