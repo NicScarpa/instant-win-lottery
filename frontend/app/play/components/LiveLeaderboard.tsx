@@ -71,7 +71,7 @@ export default function LiveLeaderboard({ promotionId, currentCustomerId }: Prop
     }
 
     // --- DESIGN COMPONENTE ---
-    
+
     return (
         <div className="w-full">
             {/* Intestazione Tabella */}
@@ -88,23 +88,21 @@ export default function LiveLeaderboard({ promotionId, currentCustomerId }: Prop
                     return (
                         <li
                             key={idx}
-                            className={`flex justify-between items-center p-3 border-2 transition-all ${
-                                isMe
-                                ? 'bg-black text-white border-black transform scale-[1.02] shadow-lg z-10'
-                                : 'bg-white text-gray-800 border-gray-200'
-                            }`}
+                            className={`flex justify-between items-center p-3 border-2 transition-all ${isMe
+                                    ? 'bg-black text-white border-black transform scale-[1.02] shadow-lg z-10'
+                                    : 'bg-white text-gray-800 border-gray-200'
+                                }`}
                         >
                             <div className="flex items-center gap-3">
                                 {/* Badge Posizione - FIX: Usa classi statiche per Tailwind */}
-                                <div className={`w-6 h-6 flex items-center justify-center font-black text-xs ${
-                                    rank === 1 ? 'bg-[#E3001B] text-white' :
-                                    rank === 2 ? 'bg-gray-400 text-white' :
-                                    rank === 3 ? 'bg-orange-400 text-white' :
-                                    'bg-transparent text-gray-400'
-                                }`}>
+                                <div className={`w-6 h-6 flex items-center justify-center font-black text-xs ${rank === 1 ? 'bg-[#E3001B] text-white' :
+                                        rank === 2 ? 'bg-gray-400 text-white' :
+                                            rank === 3 ? 'bg-orange-400 text-white' :
+                                                'bg-transparent text-gray-400'
+                                    }`}>
                                     {rank}
                                 </div>
-                                
+
                                 <div className="flex flex-col leading-none">
                                     <span className="font-bold uppercase text-sm tracking-tight">
                                         {entry.name}

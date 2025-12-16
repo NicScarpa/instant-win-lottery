@@ -2,25 +2,25 @@
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import QRCode from 'react-qr-code'; 
-import confetti from 'canvas-confetti'; 
+import QRCode from 'react-qr-code';
+import confetti from 'canvas-confetti';
 import LegalModal from '../components/LegalModal';
 import LiveLeaderboard from './components/LiveLeaderboard';
 import { LEGAL_TEXTS } from '../lib/legalData';
-import { getApiUrl } from '../lib/api'; 
+import { getApiUrl } from '../lib/api';
 
 // --- COSTANTI DI STILE CAMPARI ---
 const CAMPARI_RED = '#E3001B';
 
-type GameState = 'LOADING' | 'REGISTER' | 'READY' | 'PLAYING' | 'RESULT' | 'ERROR';
+type GameState = 'LOADING' | 'PHONE_INPUT' | 'NAME_INPUT' | 'READY' | 'PLAYING' | 'RESULT' | 'ERROR';
 
 interface PlayResult {
     win: boolean;
     prize: any;
     assignment: any;
     // leaderboard: any[]; // Non serve più qui, lo gestisce il componente
-    userRank: number; 
-    userTotalPlays: number; 
+    userRank: number;
+    userTotalPlays: number;
 }
 
 function PlayContent() {
@@ -30,7 +30,7 @@ function PlayContent() {
     // Stati
     const [gameState, setGameState] = useState<GameState>('LOADING');
     const [errorMessage, setErrorMessage] = useState('');
-    
+
     // Dati
     const [promotionId, setPromotionId] = useState('');
     const [prize, setPrize] = useState<any>(null);
@@ -41,18 +41,54 @@ function PlayContent() {
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
     const [phone, setPhone] = useState('');
-    const [customerId, setCustomerId] = useState(''); 
+    const [customerId, setCustomerId] = useState('');
+
+    // Utente esistente (per flusso "Bentornato")
+    const [existingUser, setExistingUser] = useState<{ firstName: string; lastName: string } | null>(null);
 
     // Privacy
     const [acceptTerms, setAcceptTerms] = useState(false);
     const [acceptMarketing, setAcceptMarketing] = useState(false);
-    
+
     // Modali
     const [modalOpen, setModalOpen] = useState(false);
     const [modalContent, setModalContent] = useState({ title: '', text: '' });
 
     // --- LOGICHE ---
-    // FIX: Usa useCallback per memoizzare e evitare warning dependency
+
+    // Funzione per verificare se il telefono è già registrato
+    const checkPhone = useCallback(async (phoneNumber: string) => {
+        if (!phoneNumber.trim()) {
+            alert('Inserisci un numero di telefono valido.');
+            return;
+        }
+
+        try {
+            const res = await fetch(getApiUrl('api/customer/check-phone'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ promotionId, phoneNumber: phoneNumber.trim() })
+            });
+            const data = await res.json();
+
+            if (data.exists) {
+                // Utente esistente: pre-compila i campi
+                setExistingUser({ firstName: data.firstName, lastName: data.lastName });
+                setFirstName(data.firstName);
+                setLastName(data.lastName);
+            } else {
+                // Nuovo utente: reset dei campi
+                setExistingUser(null);
+                setFirstName('');
+                setLastName('');
+            }
+            setGameState('NAME_INPUT');
+        } catch (err) {
+            console.error('Errore check-phone:', err);
+            alert('Errore di connessione. Riprova.');
+        }
+    }, [promotionId]);
+
     const registerUser = useCallback(async (fName: string, lName: string, ph: string, promoId: string, saveLocal: boolean, marketing: boolean) => {
         try {
             const res = await fetch(getApiUrl('api/customer/register'), {
@@ -87,37 +123,58 @@ function PlayContent() {
     }, []);
 
     useEffect(() => {
-        if (!token) { setGameState('ERROR'); setErrorMessage('Codice QR mancante.'); return; }
+        let mounted = true;
+
         const validateToken = async () => {
+            if (!token) {
+                if (mounted) {
+                    setGameState('ERROR');
+                    setErrorMessage('Codice QR mancante.');
+                }
+                return;
+            }
+
             try {
-                const res = await fetch(getApiUrl(`api/customer/validate-token/${token}`)); // Endpoint corretto da server.ts
+                const res = await fetch(getApiUrl(`api/customer/validate-token/${token}`));
                 const data = await res.json();
-                
-                if (!data.valid) { setGameState('ERROR'); setErrorMessage(data.message); return; }
-                
+
+                if (!mounted) return;
+
+                if (!data.valid) {
+                    setGameState('ERROR');
+                    setErrorMessage(data.message);
+                    return;
+                }
+
                 setPromotionId(data.promotionId);
-                
+
+                // NUOVO FLUSSO: Sempre partire da PHONE_INPUT
+                // Se c'è un utente salvato, pre-compiliamo solo il telefono
                 const savedUser = localStorage.getItem('campari_user');
                 if (savedUser) {
                     try {
                         const user = JSON.parse(savedUser);
-                        setFirstName(user.firstName);
-                        setLastName(user.lastName);
-                        setPhone(user.phone);
-                        // Tentiamo auto-registrazione/login
-                        await registerUser(user.firstName, user.lastName, user.phone, data.promotionId, false, false);
+                        // Pre-compila solo il telefono, l'utente lo confermerà
+                        setPhone(user.phone || '');
                     } catch (error) {
-                        // JSON corrotto, rimuovi e richiedi registrazione
+                        // JSON corrotto, rimuovi
                         localStorage.removeItem('campari_user');
-                        setGameState('REGISTER');
                     }
-                } else {
-                    setGameState('REGISTER');
                 }
-            } catch (err) { setGameState('ERROR'); setErrorMessage('Errore connessione.'); }
+                // Vai sempre a PHONE_INPUT come primo step
+                setGameState('PHONE_INPUT');
+            } catch (err) {
+                if (mounted) {
+                    setGameState('ERROR');
+                    setErrorMessage('Errore connessione.');
+                }
+            }
         };
+
         validateToken();
-    }, [token, registerUser]);
+
+        return () => { mounted = false; };
+    }, [token]);
 
     const handleRegistrationSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -140,6 +197,12 @@ function PlayContent() {
                 return;
             }
 
+            interface PlayResponse {
+                isWinner: boolean;
+                prizeAssignment: any; // Keeping any on assignment for now as structure depends on backend, but defining top level
+                error?: string;
+            }
+
             const res = await fetch(getApiUrl('api/customer/play'), {
                 method: 'POST',
                 headers: {
@@ -153,8 +216,8 @@ function PlayContent() {
                     // RIMOSSO: customer_id (viene preso dal JWT token dal backend)
                 })
             });
-            const data: any = await res.json(); 
-            
+            const data: PlayResponse = await res.json();
+
             if (res.ok) {
                 // data contiene { isWinner, prizeAssignment }
                 if (data.isWinner) {
@@ -164,9 +227,9 @@ function PlayContent() {
                     setPrize(null);
                 }
                 setGameState('RESULT');
-            } else { 
-                setGameState('ERROR'); 
-                setErrorMessage(data.error || 'Errore di gioco'); 
+            } else {
+                setGameState('ERROR');
+                setErrorMessage(data.error || 'Errore di gioco');
             }
         } catch (err) { setGameState('ERROR'); setErrorMessage("Errore di rete."); }
     };
@@ -181,7 +244,7 @@ function PlayContent() {
     const bgStyle = {
         backgroundColor: CAMPARI_RED,
         backgroundImage: `url('/bottiglia.png')`,
-        backgroundSize: '80px', 
+        backgroundSize: '80px',
         backgroundRepeat: 'repeat',
         backgroundBlendMode: 'soft-light',
     };
@@ -192,40 +255,101 @@ function PlayContent() {
 
             {/* HEADER */}
             <header className="pt-8 pb-4 z-10 w-full max-w-xs mx-auto">
-                <img 
-                    src="/camparisoda.png" 
-                    alt="Campari Soda" 
+                <img
+                    src="/camparisoda.png"
+                    alt="Campari Soda"
                     className="w-48 mx-auto drop-shadow-md"
-                    onError={(e) => e.currentTarget.style.display = 'none'} 
+                    onError={(e) => e.currentTarget.style.display = 'none'}
                 />
             </header>
 
             <main className="flex-grow w-full max-w-md px-6 flex flex-col justify-center relative z-10">
-                
-                {/* 1. REGISTRAZIONE */}
-                {gameState === 'REGISTER' && (
+
+                {/* STEP 1: INSERIMENTO TELEFONO */}
+                {gameState === 'PHONE_INPUT' && (
                     <div className="animate-fade-in bg-white text-black p-8 rounded-none border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-                        <h2 className="text-3xl font-bold mb-6 uppercase text-center tracking-tighter">Unisciti<br/>al Rito</h2>
-                        <form onSubmit={handleRegistrationSubmit} className="space-y-5">
-                            <div className="space-y-4">
-                                <input type="text" required value={firstName} onChange={e => setFirstName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder="NOME" />
-                                <input type="text" required value={lastName} onChange={e => setLastName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder="COGNOME" />
-                                <input type="tel" required value={phone} onChange={e => setPhone(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder="CELLULARE" />
-                            </div>
-                            <div className="space-y-3 text-sm font-bold">
-                                <label className="flex items-start gap-3 cursor-pointer">
-                                    <input type="checkbox" required checked={acceptTerms} onChange={e => setAcceptTerms(e.target.checked)} className="mt-1 w-5 h-5 accent-black" />
-                                    <span>Accetto <button type="button" onClick={() => openLegal('terms')} className="underline">Regolamento</button> e <button type="button" onClick={() => openLegal('privacy')} className="underline">Privacy</button></span>
-                                </label>
-                                <label className="flex items-start gap-3 cursor-pointer">
-                                    <input type="checkbox" checked={acceptMarketing} onChange={e => setAcceptMarketing(e.target.checked)} className="mt-1 w-5 h-5 accent-black" />
-                                    <span>Marketing (Opzionale)</span>
-                                </label>
-                            </div>
-                            <button type="submit" className="w-full bg-black text-white font-bold text-xl py-4 hover:bg-[#E3001B] hover:text-white transition-colors uppercase tracking-widest border-2 border-transparent hover:border-white">
-                                AVANTI
+                        <h2 className="text-3xl font-bold mb-2 uppercase text-center tracking-tighter">Unisciti<br />al Rito</h2>
+                        <p className="text-gray-500 text-center text-sm mb-6 font-medium">Inserisci il tuo numero di cellulare</p>
+                        <div className="space-y-5">
+                            <input
+                                type="tel"
+                                required
+                                value={phone}
+                                onChange={e => setPhone(e.target.value)}
+                                className="w-full border-b-2 border-black bg-gray-50 p-4 font-bold text-xl text-center focus:outline-none focus:bg-red-50 tracking-wider"
+                                placeholder="ES: 3401234567"
+                                autoFocus
+                            />
+                            <button
+                                onClick={() => checkPhone(phone)}
+                                disabled={!phone.trim()}
+                                className="w-full bg-black text-white font-bold text-xl py-4 hover:bg-[#E3001B] hover:text-white transition-colors uppercase tracking-widest border-2 border-transparent hover:border-white disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            >
+                                CONTINUA
                             </button>
-                        </form>
+                        </div>
+                    </div>
+                )}
+
+                {/* STEP 2: NOME E COGNOME */}
+                {gameState === 'NAME_INPUT' && (
+                    <div className="animate-fade-in bg-white text-black p-8 rounded-none border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+                        {existingUser ? (
+                            // UTENTE GIÀ REGISTRATO
+                            <>
+                                <div className="text-center mb-6">
+                                    <span className="text-5xl">👋</span>
+                                    <h2 className="text-3xl font-bold uppercase tracking-tighter mt-2">Bentornato!</h2>
+                                    <p className="text-gray-500 text-sm font-medium mt-1">Conferma i tuoi dati per continuare</p>
+                                </div>
+                                <form onSubmit={handleRegistrationSubmit} className="space-y-5">
+                                    <div className="space-y-4">
+                                        <input type="text" required value={firstName} onChange={e => setFirstName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder="NOME" />
+                                        <input type="text" required value={lastName} onChange={e => setLastName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder="COGNOME" />
+                                    </div>
+                                    <div className="space-y-3 text-sm font-bold">
+                                        <label className="flex items-start gap-3 cursor-pointer">
+                                            <input type="checkbox" required checked={acceptTerms} onChange={e => setAcceptTerms(e.target.checked)} className="mt-1 w-5 h-5 accent-black" />
+                                            <span>Accetto <button type="button" onClick={() => openLegal('terms')} className="underline">Regolamento</button> e <button type="button" onClick={() => openLegal('privacy')} className="underline">Privacy</button></span>
+                                        </label>
+                                    </div>
+                                    <button type="submit" className="w-full bg-[#E3001B] text-white font-bold text-xl py-4 hover:bg-black hover:text-white transition-colors uppercase tracking-widest border-2 border-transparent hover:border-white">
+                                        GIOCA
+                                    </button>
+                                    <button type="button" onClick={() => { setExistingUser(null); setGameState('PHONE_INPUT'); }} className="w-full text-gray-400 text-xs underline">
+                                        Non sono io, cambia numero
+                                    </button>
+                                </form>
+                            </>
+                        ) : (
+                            // NUOVO UTENTE
+                            <>
+                                <h2 className="text-3xl font-bold mb-2 uppercase text-center tracking-tighter">Come ti chiami?</h2>
+                                <p className="text-gray-500 text-center text-sm mb-6 font-medium">Completa la registrazione</p>
+                                <form onSubmit={handleRegistrationSubmit} className="space-y-5">
+                                    <div className="space-y-4">
+                                        <input type="text" required value={firstName} onChange={e => setFirstName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder="NOME" autoFocus />
+                                        <input type="text" required value={lastName} onChange={e => setLastName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder="COGNOME" />
+                                    </div>
+                                    <div className="space-y-3 text-sm font-bold">
+                                        <label className="flex items-start gap-3 cursor-pointer">
+                                            <input type="checkbox" required checked={acceptTerms} onChange={e => setAcceptTerms(e.target.checked)} className="mt-1 w-5 h-5 accent-black" />
+                                            <span>Accetto <button type="button" onClick={() => openLegal('terms')} className="underline">Regolamento</button> e <button type="button" onClick={() => openLegal('privacy')} className="underline">Privacy</button></span>
+                                        </label>
+                                        <label className="flex items-start gap-3 cursor-pointer">
+                                            <input type="checkbox" checked={acceptMarketing} onChange={e => setAcceptMarketing(e.target.checked)} className="mt-1 w-5 h-5 accent-black" />
+                                            <span>Marketing (Opzionale)</span>
+                                        </label>
+                                    </div>
+                                    <button type="submit" className="w-full bg-black text-white font-bold text-xl py-4 hover:bg-[#E3001B] hover:text-white transition-colors uppercase tracking-widest border-2 border-transparent hover:border-white">
+                                        AVANTI
+                                    </button>
+                                    <button type="button" onClick={() => setGameState('PHONE_INPUT')} className="w-full text-gray-400 text-xs underline">
+                                        Torna indietro
+                                    </button>
+                                </form>
+                            </>
+                        )}
                     </div>
                 )}
 
@@ -235,7 +359,7 @@ function PlayContent() {
                         <div className="w-24 h-24 bg-[#E3001B] rounded-full mx-auto mb-6 flex items-center justify-center text-5xl shadow-inner border-4 border-black">
                             🎲
                         </div>
-                        <h2 className="text-4xl font-bold uppercase tracking-tighter text-black mb-2 leading-none">CIAO<br/>{firstName}!</h2>
+                        <h2 className="text-4xl font-bold uppercase tracking-tighter text-black mb-2 leading-none">CIAO<br />{firstName}!</h2>
                         <p className="text-gray-600 font-bold mb-8 uppercase text-sm tracking-widest">Il tuo momento è adesso.</p>
                         <button onClick={handlePlay} className="w-full bg-[#E3001B] text-white text-2xl font-bold py-5 border-4 border-black hover:bg-black hover:text-white transition-all uppercase tracking-widest shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none">
                             GIOCA ORA
@@ -256,12 +380,12 @@ function PlayContent() {
                     <div className="animate-fade-in text-center">
                         {prize ? (
                             // WIN
-                            <div className="bg-white text-black border-4 border-black p-6 shadow-[10px_10px_0px_0px_rgba(0,0,0,0.3)] mb-8 relative">
-                                <h2 className="text-5xl font-bold uppercase tracking-tighter mb-2 text-[#E3001B]">VINTO!</h2>
+                            <div className="bg-white text-black border-4 border-black p-6 shadow-[10px_10px_0px_0px_rgba(0,0,0,0.3)] mb-8 relative flex flex-col items-center text-center">
+                                <h2 className="text-5xl font-bold uppercase tracking-tighter mb-2 text-[#E3001B]">HAI VINTO!</h2>
                                 <p className="text-xl font-bold uppercase border-b-4 border-black inline-block pb-1 mb-6">
                                     {prize.prize_type?.name}
                                 </p>
-                                <div className="bg-black p-4 mb-4 inline-block mx-auto border-4 border-black">
+                                <div className="bg-black p-4 mb-4 border-4 border-black flex flex-col items-center">
                                     <div className="bg-white p-2">
                                         <QRCode value={prize.prize_code} size={160} fgColor="#000000" />
                                     </div>
@@ -269,15 +393,17 @@ function PlayContent() {
                                         {prize.prize_code}
                                     </p>
                                 </div>
-                                <p className="text-xs font-bold uppercase text-gray-500">Mostra al banco per ritirare</p>
+                                <p className="text-xs font-bold uppercase text-gray-500 max-w-[250px] leading-tight">
+                                    MOSTRA IL CODICE AD UN CAMERIERE PER RITIRARE IL TUO PREMIO
+                                </p>
                             </div>
                         ) : (
                             // LOSE
                             <div className="bg-black text-white border-4 border-white p-8 text-center shadow-[8px_8px_0px_0px_rgba(255,255,255,0.2)] mb-8">
                                 <h2 className="text-4xl font-bold uppercase tracking-tighter mb-4 text-[#E3001B]">PECCATO!</h2>
                                 <p className="font-bold text-lg mb-6 leading-relaxed uppercase">
-                                    Niente gadget questa volta.<br/>
-                                    Ma un Campari Soda<br/>è sempre una vittoria.
+                                    Niente gadget questa volta.<br />
+                                    Ma un Campari Soda<br />è sempre una vittoria.
                                 </p>
                                 <div className="inline-block border-2 border-white px-4 py-2 text-xs font-bold uppercase tracking-widest">
                                     Ritenta col prossimo
@@ -288,11 +414,11 @@ function PlayContent() {
                         {/* CLASSIFICA LIVE */}
                         <div className="bg-white text-black p-4 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
                             <h3 className="text-center font-bold uppercase border-b-2 border-black pb-2 mb-2 tracking-widest">Classifica Live</h3>
-                            
+
                             {/* FIX: Uso corretto del componente con le nuove props */}
-                            <LiveLeaderboard 
-                                promotionId={Number(promotionId)} 
-                                currentCustomerId={Number(customerId)} 
+                            <LiveLeaderboard
+                                promotionId={Number(promotionId)}
+                                currentCustomerId={Number(customerId)}
                             />
                         </div>
                     </div>
@@ -308,7 +434,7 @@ function PlayContent() {
                 )}
 
             </main>
-            
+
             {/* FOOTER */}
             <footer className="text-center text-[10px] text-white/80 py-4 mt-auto uppercase font-bold tracking-widest z-10">
                 <div className="space-x-4">

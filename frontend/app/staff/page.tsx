@@ -9,11 +9,18 @@ import { getApiUrl } from '../lib/api'; // <--- MODIFICA: Import getApiUrl
 
 type ScanStatus = 'IDLE' | 'SCANNING' | 'PROCESSING' | 'SUCCESS' | 'ERROR' | 'WARNING';
 
+interface ScanResult {
+    prizeType?: string;
+    redeemedAt?: string;
+    redeemedBy?: string;
+    error?: string;
+}
+
 export default function StaffPage() {
     const router = useRouter();
     const [status, setStatus] = useState<ScanStatus>('SCANNING');
     const [resultMessage, setResultMessage] = useState('');
-    const [resultDetails, setResultDetails] = useState<any>(null);
+    const [resultDetails, setResultDetails] = useState<ScanResult | null>(null);
     const [manualCode, setManualCode] = useState('');
 
     // 1. Check Sessione (Staff/Admin)
@@ -48,11 +55,12 @@ export default function StaffPage() {
     }, [router]);
 
     // 2. Gestione Scansione QR
-    const handleScan = async (rawResult: any) => {
+    const handleScan = async (rawResult: unknown) => {
         if (!rawResult || status !== 'SCANNING') return;
-        
+
         // La libreria può ritornare un array o un oggetto singolo, normalizziamo
-        const code = Array.isArray(rawResult) ? rawResult[0]?.rawValue : rawResult?.rawValue;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const code = Array.isArray(rawResult) ? (rawResult[0] as any)?.rawValue : (rawResult as any)?.rawValue;
         if (!code) return;
 
         processCode(code);
@@ -96,17 +104,14 @@ export default function StaffPage() {
                 // SUCCESSO: Premio valido e bruciato ora
                 setStatus('SUCCESS');
                 setResultDetails(data);
-                // playAudio('success'); // Funzione non implementata, lasciata come commento
             } else {
                 // ERRORE o GIÀ RITIRATO (Assumiamo che il backend dia dettagli sul 400)
                 if (res.status === 400 && data.redeemedAt) {
                     setStatus('WARNING'); // Già ritirato
                     setResultDetails(data);
-                    // playAudio('error');
                 } else {
                     setStatus('ERROR'); // Codice non valido o altro errore
                     setResultMessage(data.error || 'Codice non valido');
-                    // playAudio('error');
                 }
             }
         } catch (error) {
@@ -114,11 +119,6 @@ export default function StaffPage() {
             setResultMessage('Errore di connessione al server.');
             console.error(error);
         }
-    };
-
-    // Helper Audio (Opzionale, non implementato)
-    const playAudio = (type: 'success' | 'error') => {
-        // Implementazione audio (se necessario)
     };
 
     const resetScanner = () => {
@@ -140,21 +140,21 @@ export default function StaffPage() {
 
             {/* Main Content */}
             <main className="flex-grow flex flex-col items-center justify-start p-4 relative">
-                
+
                 {/* MODALITÀ SCANSIONE */}
                 {(status === 'SCANNING' || status === 'PROCESSING' || status === 'IDLE') && (
                     <div className="w-full max-w-md space-y-6">
                         <div className="text-center mb-2">
                             <p className="text-gray-300 text-sm">Inquadra il QR Code del cliente</p>
                         </div>
-                        
+
                         <div className="relative overflow-hidden rounded-xl border-2 border-red-500 shadow-2xl bg-black aspect-square">
                             {/* Mostra Scanner solo in stato 'SCANNING' */}
                             {status === 'SCANNING' && (
-                                <Scanner 
-                                    onScan={handleScan} 
+                                <Scanner
+                                    onScan={handleScan}
                                     styles={{ container: { width: '100%', height: '100%' } }}
-                                    components={{ finder: false }} 
+                                    components={{ finder: false }}
                                 />
                             )}
 
@@ -174,8 +174,8 @@ export default function StaffPage() {
                         <div className="text-center">
                             <p className="text-gray-500 text-xs mb-2">- OPPURE -</p>
                             <form onSubmit={handleManualSubmit} className="flex gap-2">
-                                <input 
-                                    type="text" 
+                                <input
+                                    type="text"
                                     value={manualCode}
                                     onChange={(e) => setManualCode(e.target.value.toUpperCase())}
                                     placeholder="Inserisci codice manuale"
@@ -195,7 +195,7 @@ export default function StaffPage() {
                         </div>
                         <h2 className="text-4xl font-bold mb-2">PREMIO VALIDO!</h2>
                         <p className="text-green-100 text-lg mb-8">Consegna al cliente:</p>
-                        
+
                         <div className="bg-white text-green-900 p-6 rounded-xl shadow-lg w-full max-w-sm mb-8">
                             <h3 className="text-2xl font-bold break-words">{resultDetails?.prizeType}</h3>
                             <p className="text-sm text-gray-500 mt-2">Ritirato il: {resultDetails?.redeemedAt ? new Date(resultDetails.redeemedAt).toLocaleString() : 'Ora'}</p>
@@ -215,7 +215,7 @@ export default function StaffPage() {
                         </div>
                         <h2 className="text-3xl font-bold mb-2 text-white shadow-sm">GIÀ RITIRATO</h2>
                         <p className="text-yellow-100 font-medium mb-8">Questo premio è già stato consegnato.</p>
-                        
+
                         <div className="bg-white/90 text-yellow-900 p-6 rounded-xl shadow-lg w-full max-w-sm mb-8 text-left text-sm">
                             <p><strong>Premio:</strong> {resultDetails?.prizeType}</p>
                             <p><strong>Data Ritiro:</strong> {resultDetails?.redeemedAt ? new Date(resultDetails.redeemedAt).toLocaleString() : 'N/D'}</p>
@@ -236,7 +236,7 @@ export default function StaffPage() {
                         </div>
                         <h2 className="text-3xl font-bold mb-4 text-white">ERRORE</h2>
                         <p className="text-red-100 text-xl mb-8">{resultMessage}</p>
-                        
+
                         <button onClick={resetScanner} className="bg-white text-red-600 px-10 py-4 rounded-full font-bold text-xl shadow-lg">
                             Riprova
                         </button>

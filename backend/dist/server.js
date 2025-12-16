@@ -431,6 +431,41 @@ app.get('/api/customer/validate-token/:code', async (req, res) => {
         res.status(500).json({ error: 'Server error' });
     }
 });
+// Check Phone - Verifica se un numero di telefono è già registrato
+app.post('/api/customer/check-phone', async (req, res) => {
+    const { promotionId, phoneNumber } = req.body;
+    if (!promotionId || !phoneNumber) {
+        return res.status(400).json({ error: 'Missing promotionId or phoneNumber' });
+    }
+    try {
+        const customer = await prisma.customer.findUnique({
+            where: {
+                promotion_id_phone_number: {
+                    promotion_id: Number(promotionId),
+                    phone_number: phoneNumber
+                }
+            },
+            select: {
+                first_name: true,
+                last_name: true
+            }
+        });
+        if (customer) {
+            res.json({
+                exists: true,
+                firstName: customer.first_name,
+                lastName: customer.last_name
+            });
+        }
+        else {
+            res.json({ exists: false });
+        }
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
 // Register
 app.post('/api/customer/register', async (req, res) => {
     const { promotionId, firstName, lastName, phoneNumber, consentMarketing, consentTerms } = req.body;
