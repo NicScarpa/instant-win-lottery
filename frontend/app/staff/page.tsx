@@ -18,17 +18,33 @@ export default function StaffPage() {
 
     // 1. Check Sessione (Staff/Admin)
     useEffect(() => {
-        // MODIFICA: Uso getApiUrl
-        fetch(getApiUrl('api/auth/me'), { credentials: 'include' })
-            .then(res => {
-                if (!res.ok) router.push('/admin/login'); // Se non loggato, reindirizza
-            })
-            .catch((err) => {
-                // In caso di errore di connessione, si può decidere se bloccare o lasciare
+        const checkSession = async () => {
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                router.push('/admin/login');
+                return;
+            }
+
+            try {
+                const res = await fetch(getApiUrl('api/auth/me'), {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    credentials: 'include'
+                });
+
+                if (!res.ok) {
+                    localStorage.removeItem('admin_token');
+                    router.push('/admin/login');
+                }
+            } catch (err) {
                 console.error("Connection error during session check:", err);
-                // Non reindirizziamo forzatamente in caso di errore di rete, ma l'utente non potrà fare operazioni API
-                // Se non rileva una sessione OK, il form sarà comunque inutile
-            });
+                // Non reindirizziamo in caso di errore di rete temporaneo
+            }
+        };
+
+        checkSession();
     }, [router]);
 
     // 2. Gestione Scansione QR
@@ -56,12 +72,21 @@ export default function StaffPage() {
         setResultMessage('');
         setResultDetails(null);
 
+        const token = localStorage.getItem('admin_token');
+        if (!token) {
+            setStatus('ERROR');
+            setResultMessage('Sessione scaduta. Effettua nuovamente il login.');
+            return;
+        }
+
         try {
-            // MODIFICA: Uso getApiUrl
             const res = await fetch(getApiUrl('api/staff/redeem'), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include', // Necessario per inviare il cookie JWT di Staff
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}` // FIX: Aggiunto Authorization header
+                },
+                credentials: 'include',
                 body: JSON.stringify({ prizeCode: code })
             });
 

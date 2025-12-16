@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import QRCode from 'react-qr-code'; 
 import confetti from 'canvas-confetti'; 
@@ -52,13 +52,14 @@ function PlayContent() {
     const [modalContent, setModalContent] = useState({ title: '', text: '' });
 
     // --- LOGICHE ---
-    const registerUser = async (fName: string, lName: string, ph: string, promoId: string, saveLocal: boolean, marketing: boolean) => {
+    // FIX: Usa useCallback per memoizzare e evitare warning dependency
+    const registerUser = useCallback(async (fName: string, lName: string, ph: string, promoId: string, saveLocal: boolean, marketing: boolean) => {
         try {
             const res = await fetch(getApiUrl('api/customer/register'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    promotionId: promoId, // Attenzione: il backend si aspetta camelCase o snake_case? Controlliamo server.ts -> promotionId
+                    promotionId: promoId,
                     firstName: fName,
                     lastName: lName,
                     phoneNumber: ph,
@@ -68,9 +69,9 @@ function PlayContent() {
             });
             const data = await res.json();
             if (res.ok) {
-                setCustomerId(data.customerId); // server.ts restituisce { customerId: ..., token: ... }
+                setCustomerId(data.customerId);
 
-                // NUOVO: Salva il JWT token per le richieste successive
+                // Salva il JWT token per le richieste successive
                 if (data.token) {
                     localStorage.setItem('customer_token', data.token);
                 }
@@ -83,7 +84,7 @@ function PlayContent() {
                 alert('Errore registrazione: ' + (data.error || 'Dati non validi'));
             }
         } catch (err) { alert('Errore di connessione.'); }
-    };
+    }, []);
 
     useEffect(() => {
         if (!token) { setGameState('ERROR'); setErrorMessage('Codice QR mancante.'); return; }
@@ -116,7 +117,7 @@ function PlayContent() {
             } catch (err) { setGameState('ERROR'); setErrorMessage('Errore connessione.'); }
         };
         validateToken();
-    }, [token]);
+    }, [token, registerUser]);
 
     const handleRegistrationSubmit = (e: React.FormEvent) => {
         e.preventDefault();

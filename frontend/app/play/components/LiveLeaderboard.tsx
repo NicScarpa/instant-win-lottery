@@ -26,20 +26,44 @@ interface Props {
 
 export default function LiveLeaderboard({ promotionId, currentCustomerId }: Props) {
     const [data, setData] = useState<LiveLeaderboardData | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
 
     // Effettua la chiamata API per recuperare la classifica
     useEffect(() => {
         if (promotionId && currentCustomerId) {
-            // USO getApiUrl QUI per il live fetching
+            setLoading(true);
+            setError(null);
+
             fetch(getApiUrl(`api/leaderboard/${promotionId}?customerId=${currentCustomerId}`))
-                .then(res => res.json())
-                .then(setData)
-                .catch(console.error);
+                .then(res => {
+                    if (!res.ok) throw new Error('Errore caricamento classifica');
+                    return res.json();
+                })
+                .then(data => {
+                    setData(data);
+                    setLoading(false);
+                })
+                .catch(err => {
+                    console.error('Leaderboard fetch error:', err);
+                    setError('Impossibile caricare la classifica');
+                    setLoading(false);
+                });
+        } else {
+            setLoading(false);
         }
     }, [promotionId, currentCustomerId]);
 
-    if (!data) {
+    if (loading) {
         return <div className="text-center text-gray-400 py-4 italic text-xs uppercase tracking-widest">Caricamento Classifica...</div>;
+    }
+
+    if (error) {
+        return <div className="text-center text-red-500 py-4 text-xs uppercase tracking-widest">{error}</div>;
+    }
+
+    if (!data) {
+        return <div className="text-center text-gray-400 py-4 italic text-xs uppercase tracking-widest">Classifica non disponibile</div>;
     }
 
     if (data.leaderboard.length === 0) {
@@ -60,23 +84,22 @@ export default function LiveLeaderboard({ promotionId, currentCustomerId }: Prop
                 {data.leaderboard.map((entry, idx) => {
                     const isMe = entry.isMe;
                     const rank = entry.rank;
-                    const CAMPARI_RED = '#E3001B';
 
                     return (
-                        <li 
-                            key={idx} 
+                        <li
+                            key={idx}
                             className={`flex justify-between items-center p-3 border-2 transition-all ${
-                                isMe 
-                                ? 'bg-black text-white border-black transform scale-[1.02] shadow-lg z-10' 
+                                isMe
+                                ? 'bg-black text-white border-black transform scale-[1.02] shadow-lg z-10'
                                 : 'bg-white text-gray-800 border-gray-200'
                             }`}
                         >
                             <div className="flex items-center gap-3">
-                                {/* Badge Posizione */}
+                                {/* Badge Posizione - FIX: Usa classi statiche per Tailwind */}
                                 <div className={`w-6 h-6 flex items-center justify-center font-black text-xs ${
-                                    rank === 1 ? `bg-[${CAMPARI_RED}] text-white` : 
-                                    rank === 2 ? 'bg-gray-400 text-white' : 
-                                    rank === 3 ? 'bg-orange-400 text-white' : 
+                                    rank === 1 ? 'bg-[#E3001B] text-white' :
+                                    rank === 2 ? 'bg-gray-400 text-white' :
+                                    rank === 3 ? 'bg-orange-400 text-white' :
                                     'bg-transparent text-gray-400'
                                 }`}>
                                     {rank}

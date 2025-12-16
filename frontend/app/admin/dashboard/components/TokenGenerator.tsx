@@ -87,7 +87,7 @@ export default function TokenGenerator({ promotionId, promotionName, onOperation
                 return;
             }
 
-            const res = await fetch(getApiUrl('api/admin/tokens/generate'), {
+            const res = await fetch(getApiUrl('api/admin/generate-tokens'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

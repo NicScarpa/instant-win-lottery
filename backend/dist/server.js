@@ -32,7 +32,13 @@ if (JWT_SECRET === 'super-secret-key-change-in-prod' || JWT_SECRET === 'chiave_s
 }
 // Configurazione CORS
 app.use((0, cors_1.default)({
-    origin: [APP_URL, 'http://localhost:3000'],
+    origin: [
+        APP_URL,
+        'http://localhost:3000',
+        'https://new-frontend-camparino-week.up.railway.app', // Railway frontend domain
+        'https://campari-lottery-git-main-nicola-scarpas-projects.vercel.app', // Vercel branch domain
+        'https://campari-lottery.vercel.app' // Vercel production domain
+    ],
     credentials: true
 }));
 app.use(express_1.default.json());
@@ -60,7 +66,7 @@ app.post('/api/auth/login', async (req, res) => {
             sameSite: 'none',
             maxAge: 8 * 3600 * 1000
         });
-        res.json({ success: true, role: user.role });
+        res.json({ success: true, role: user.role, token: token });
     }
     catch (err) {
         console.error(err);
@@ -134,18 +140,33 @@ app.put('/api/promotions/update/:id', authMiddleware_1.authenticateToken, (0, au
         res.status(500).json({ error: 'Errore aggiornamento' });
     }
 });
-// Elimina Promozione
+// Elimina Promozione (con cascade completo)
 app.delete('/api/promotions/delete/:id', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { id } = req.params;
+    const pid = Number(id);
     try {
-        await prisma.token.deleteMany({ where: { promotion_id: Number(id) } });
-        await prisma.prizeType.deleteMany({ where: { promotion_id: Number(id) } });
-        await prisma.promotion.delete({ where: { id: Number(id) } });
+        // Usa una transazione per garantire atomicità
+        await prisma.$transaction(async (tx) => {
+            // 1. Elimina FinalLeaderboard (dipende da Customer e Promotion)
+            await tx.finalLeaderboard.deleteMany({ where: { promotion_id: pid } });
+            // 2. Elimina PrizeAssignment (dipende da PrizeType, Customer, Token, Play)
+            await tx.prizeAssignment.deleteMany({ where: { promotion_id: pid } });
+            // 3. Elimina Play (dipende da Token, Customer)
+            await tx.play.deleteMany({ where: { promotion_id: pid } });
+            // 4. Elimina Customer (dipende da Promotion)
+            await tx.customer.deleteMany({ where: { promotion_id: pid } });
+            // 5. Elimina Token (dipende da Promotion)
+            await tx.token.deleteMany({ where: { promotion_id: pid } });
+            // 6. Elimina PrizeType (dipende da Promotion)
+            await tx.prizeType.deleteMany({ where: { promotion_id: pid } });
+            // 7. Elimina Promotion
+            await tx.promotion.delete({ where: { id: pid } });
+        });
         res.json({ success: true });
     }
     catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Errore eliminazione' });
+        console.error('Errore eliminazione promozione:', err);
+        res.status(500).json({ error: 'Errore eliminazione promozione' });
     }
 });
 // ==========================================
@@ -162,6 +183,29 @@ app.get('/api/admin/prizes/:promotionId', authMiddleware_1.authenticateToken, (0
     }
     catch (err) {
         res.status(500).json({ error: 'Errore recupero premi' });
+    }
+});
+// Aggiungi singolo premio
+app.post('/api/admin/prizes/add', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { promotionId, name, initialStock } = req.body;
+    if (!promotionId || !name || !initialStock) {
+        return res.status(400).json({ error: 'Campi mancanti: promotionId, name, initialStock sono obbligatori' });
+    }
+    try {
+        const prize = await prisma.prizeType.create({
+            data: {
+                promotion_id: Number(promotionId),
+                name: name.trim(),
+                initial_stock: Number(initialStock),
+                remaining_stock: Number(initialStock),
+                target_overall_probability: 0
+            }
+        });
+        res.json({ success: true, prize });
+    }
+    catch (err) {
+        console.error('Errore creazione premio:', err);
+        res.status(500).json({ error: 'Errore creazione premio' });
     }
 });
 app.post('/api/admin/prizes/update', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
@@ -207,13 +251,32 @@ app.get('/api/admin/stats/:promotionId', authMiddleware_1.authenticateToken, (0,
     try {
         const totalTokens = await prisma.token.count({ where: { promotion_id: pid } });
         const usedTokens = await prisma.token.count({ where: { promotion_id: pid, status: 'used' } });
+        const availableTokens = await prisma.token.count({ where: { promotion_id: pid, status: 'available' } });
         const totalPlays = await prisma.play.count({ where: { promotion_id: pid } });
         const uniquePlayers = await prisma.customer.count({ where: { promotion_id: pid } });
         const wins = await prisma.play.count({ where: { promotion_id: pid, is_winner: true } });
         const prizes = await prisma.prizeType.findMany({ where: { promotion_id: pid } });
         const totalStock = prizes.reduce((acc, p) => acc + p.initial_stock, 0);
         const remainingStock = prizes.reduce((acc, p) => acc + p.remaining_stock, 0);
+        // Dettagli premi per il frontend
+        const prizeDetails = prizes.map(p => ({
+            name: p.name,
+            initial_stock: p.initial_stock,
+            remaining_stock: p.remaining_stock
+        }));
+        // Risposta nel formato atteso dal frontend StatsCard
         res.json({
+            tokenStats: {
+                total: totalTokens,
+                used: usedTokens,
+                available: availableTokens
+            },
+            prizeStats: {
+                total: totalStock,
+                remaining: remainingStock,
+                details: prizeDetails
+            },
+            // Manteniamo anche il vecchio formato per retrocompatibilità
             tokens: { total: totalTokens, used: usedTokens },
             plays: { total: totalPlays, unique_players: uniquePlayers },
             prizes: { total: totalStock, awarded: wins, remaining: remainingStock }
@@ -255,19 +318,36 @@ app.get('/api/admin/play-logs/:promotionId', authMiddleware_1.authenticateToken,
 app.get('/api/admin/tokens/:promotionId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId } = req.params;
     const { page = 1, limit = 50, search = '' } = req.query;
+    const pid = Number(promotionId);
+    const searchStr = String(search);
     try {
-        const tokens = await prisma.token.findMany({
-            where: {
-                promotion_id: Number(promotionId),
-                token_code: { contains: String(search) }
-            },
-            orderBy: { created_at: 'desc' },
-            take: Number(limit),
-            skip: (Number(page) - 1) * Number(limit)
+        // Definisci il filtro where una volta sola
+        const whereClause = {
+            promotion_id: pid,
+            ...(searchStr && { token_code: { contains: searchStr } })
+        };
+        // Esegui query e count in parallelo per efficienza
+        const [tokens, total] = await Promise.all([
+            prisma.token.findMany({
+                where: whereClause,
+                orderBy: { created_at: 'desc' },
+                take: Number(limit),
+                skip: (Number(page) - 1) * Number(limit)
+            }),
+            prisma.token.count({
+                where: whereClause
+            })
+        ]);
+        res.json({
+            tokens,
+            total,
+            page: Number(page),
+            limit: Number(limit),
+            totalPages: Math.ceil(total / Number(limit))
         });
-        res.json({ tokens, total: 0 });
     }
     catch (err) {
+        console.error('Errore fetch tokens:', err);
         res.status(500).json({ error: 'Errore tokens' });
     }
 });
@@ -589,38 +669,60 @@ app.get('/api/leaderboard/:promotionId', async (req, res) => {
 // ==========================================
 app.post('/api/staff/redeem', authMiddleware_1.authenticateToken, async (req, res) => {
     const { prizeCode } = req.body;
+    const staffId = req.user?.id; // Recupera l'ID dello staff dal JWT
     if (!prizeCode)
         return res.status(400).json({ error: 'Codice mancante' });
     try {
-        const assignment = await prisma.prizeAssignment.findUnique({
-            where: { prize_code: prizeCode },
-            include: { prize_type: true, customer: true }
-        });
-        if (!assignment) {
-            return res.status(404).json({ error: 'Codice premio non trovato o non valido' });
-        }
-        if (assignment.redeemed_at) {
-            return res.status(400).json({
-                error: 'Premio già ritirato',
-                redeemedAt: assignment.redeemed_at,
-                redeemedBy: assignment.redeemed_by_staff_id
+        // Usa una transazione per prevenire race condition
+        const result = await prisma.$transaction(async (tx) => {
+            // 1. Trova e blocca il record (la transazione garantisce atomicità)
+            const assignment = await tx.prizeAssignment.findUnique({
+                where: { prize_code: prizeCode },
+                include: { prize_type: true, customer: true, redeemed_by_staff: true }
             });
-        }
-        const updated = await prisma.prizeAssignment.update({
-            where: { id: assignment.id },
-            data: {
-                redeemed_at: new Date(),
+            if (!assignment) {
+                throw { code: 'NOT_FOUND', message: 'Codice premio non trovato o non valido' };
             }
+            if (assignment.redeemed_at) {
+                throw {
+                    code: 'ALREADY_REDEEMED',
+                    message: 'Premio già ritirato',
+                    redeemedAt: assignment.redeemed_at,
+                    redeemedBy: assignment.redeemed_by_staff?.username || `Staff #${assignment.redeemed_by_staff_id}`,
+                    prizeType: assignment.prize_type.name
+                };
+            }
+            // 2. Aggiorna atomicamente con staff_id
+            const updated = await tx.prizeAssignment.update({
+                where: { id: assignment.id },
+                data: {
+                    redeemed_at: new Date(),
+                    redeemed_by_staff_id: staffId // FIX: Ora salviamo chi ha riscattato
+                },
+                include: { prize_type: true, customer: true }
+            });
+            return {
+                success: true,
+                prizeType: updated.prize_type.name,
+                customer: `${updated.customer.first_name} ${updated.customer.last_name}`,
+                redeemedAt: updated.redeemed_at
+            };
         });
-        res.json({
-            success: true,
-            prize: assignment.prize_type.name,
-            customer: `${assignment.customer.first_name} ${assignment.customer.last_name}`,
-            redeemedAt: updated.redeemed_at
-        });
+        res.json(result);
     }
     catch (err) {
-        console.error(err);
+        if (err.code === 'NOT_FOUND') {
+            return res.status(404).json({ error: err.message });
+        }
+        if (err.code === 'ALREADY_REDEEMED') {
+            return res.status(400).json({
+                error: err.message,
+                redeemedAt: err.redeemedAt,
+                redeemedBy: err.redeemedBy,
+                prizeType: err.prizeType
+            });
+        }
+        console.error('Errore redeem:', err);
         res.status(500).json({ error: 'Errore durante il riscatto' });
     }
 });
