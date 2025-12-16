@@ -7,6 +7,7 @@ import StatsCard from './components/StatsCard';
 import PrizeManager from './components/PrizeManager';
 import PromotionSelector from './components/PromotionSelector';
 import PlayLogViewer from './components/PlayLogViewer';
+import PrizeOverview from './components/PrizeOverview';
 import Sidebar from './components/Sidebar';
 import { getApiUrl } from '../../lib/api'; // <--- IMPORTANTE
 
@@ -332,6 +333,12 @@ export default function AdminDashboardPage() {
                                         limit={5}
                                     />
                                 </div>
+
+                                {/* Prize Overview */}
+                                <PrizeOverview
+                                    promotionId={currentPromotion.id}
+                                    refreshKey={dataRefreshKey}
+                                />
                             </>
                         )}
 

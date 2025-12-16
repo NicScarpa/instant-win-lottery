@@ -63,6 +63,58 @@ export default function TokenGenerator({ promotionId, promotionName, onOperation
     };
 
     // ----------------------------------------------------
+    // FUNZIONE: DOWNLOAD PDF TOKEN ESISTENTI
+    // ----------------------------------------------------
+    const handleDownloadExistingPDF = async () => {
+        setSuccessMessage('');
+        setErrorMessage('');
+
+        if (!promotionId) {
+            setErrorMessage('Seleziona una promozione valida.');
+            return;
+        }
+
+        try {
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                setErrorMessage('Token di autenticazione non trovato');
+                return;
+            }
+
+            const res = await fetch(getApiUrl(`api/admin/tokens/pdf/${promotionId}`), {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                credentials: 'include',
+            });
+
+            if (res.ok && res.headers.get('Content-Type')?.includes('application/pdf')) {
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+
+                const a = document.createElement('a');
+                a.href = url;
+                const fileNameSafe = (promotionName || promotionId).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                a.download = `tokens_${fileNameSafe}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+
+                a.remove();
+                window.URL.revokeObjectURL(url);
+
+                setSuccessMessage('PDF scaricato con successo!');
+            } else {
+                const errorData = await res.json();
+                setErrorMessage(errorData.error || 'Nessun token disponibile da scaricare.');
+            }
+        } catch (err) {
+            console.error(err);
+            setErrorMessage('Errore durante il download del PDF.');
+        }
+    };
+
+    // ----------------------------------------------------
     // FUNZIONE: GENERAZIONE TOKEN
     // ----------------------------------------------------
     const handleGenerateTokens = async (e: React.FormEvent) => {
@@ -174,9 +226,19 @@ export default function TokenGenerator({ promotionId, promotionName, onOperation
                     className="w-full bg-[#E3001B] text-white font-bold py-3 px-4 rounded-xl hover:bg-[#c40018] transition-all shadow-lg shadow-red-500/30 active:scale-95 flex items-center justify-center gap-2"
                 >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
-                    Stampa PDF
+                    Genera + Stampa PDF
                 </button>
             </form>
+
+            {/* Download PDF Token Esistenti */}
+            <button
+                type="button"
+                onClick={handleDownloadExistingPDF}
+                className="w-full mt-3 bg-gray-100 text-gray-700 font-semibold py-2.5 px-4 rounded-xl hover:bg-gray-200 transition-all flex items-center justify-center gap-2 text-sm"
+            >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                Scarica PDF Token Esistenti
+            </button>
 
             <div className="mt-auto pt-4 text-center">
                 <button

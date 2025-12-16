@@ -596,24 +596,29 @@ app.post('/api/admin/generate-tokens', authenticateToken, authorizeRole('admin')
         doc.rect(x, y, CARD_W, CARD_H).lineWidth(0.2).stroke('#ccc');
 
         // Header: SCANSIONA E VINCI
-        doc.font('Helvetica-Bold').fontSize(14).fillColor('#E3001B'); // Rosso Campari
-        doc.text('SCANSIONA E VINCI', x, y + 25, { width: CARD_W, align: 'center' });
+        // Usiamo stroke per "ingrassare" il font standard se necessario, o solo size up
+        doc.font('Helvetica-Bold').fontSize(20).fillColor('#E3001B');
+        // Mock visuale aveva testo molto grande.
+        doc.text('SCANSIONA', x, y + 15, { width: CARD_W, align: 'center' });
+        doc.text('E VINCI', x, y + 35, { width: CARD_W, align: 'center' });
 
         // QR Code
         const playUrl = `${APP_URL}/play?token=${token.token_code}`;
         const qrData = await QRCode.toDataURL(playUrl, { margin: 0 });
-        const qrSize = 75;
-        doc.image(qrData, x + (CARD_W - qrSize) / 2, y + 45, { width: qrSize });
+        // QR più grande
+        const qrSize = 85;
+        doc.image(qrData, x + (CARD_W - qrSize) / 2, y + 55, { width: qrSize });
 
         // Token Code (Monospace)
-        doc.font('Courier-Bold').fontSize(12).fillColor('black');
-        doc.text(`${token.token_code}`, x, y + 125, { width: CARD_W, align: 'center', characterSpacing: 2 });
+        doc.font('Courier-Bold').fontSize(14).fillColor('black');
+        doc.text(`${token.token_code}`, x, y + CARD_H - 20, { width: CARD_W, align: 'center', characterSpacing: 3 });
 
-        // Angolo Decorativo (Basso Destra) -> Triangolo Rosso
+        // Angolo Decorativo (Basso Destra) -> Striscia Diagonale più spessa
         doc.save();
-        doc.moveTo(x + CARD_W - 30, y + CARD_H)
+        // Disegniamo un triangolo che copre l'angolo, ma facciamo attenzione a non coprire il testo (il testo è centrato, l'angolo è a dx)
+        doc.moveTo(x + CARD_W - 40, y + CARD_H)
           .lineTo(x + CARD_W, y + CARD_H)
-          .lineTo(x + CARD_W, y + CARD_H - 30)
+          .lineTo(x + CARD_W, y + CARD_H - 40)
           .fill('#E3001B');
         doc.restore();
       }
@@ -628,6 +633,116 @@ app.post('/api/admin/generate-tokens', authenticateToken, authorizeRole('admin')
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Generation failed' });
+  }
+});
+
+// Download PDF dei Token Esistenti
+app.get('/api/admin/tokens/pdf/:promotionId', authenticateToken, authorizeRole('admin'), async (req, res) => {
+  const { promotionId } = req.params;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const path = require('path');
+
+  try {
+    // Recupera tutti i token disponibili per questa promozione
+    const tokens = await prisma.token.findMany({
+      where: {
+        promotion_id: Number(promotionId),
+        status: 'available' // Solo token non ancora usati
+      },
+      orderBy: { created_at: 'asc' }
+    });
+
+    if (tokens.length === 0) {
+      return res.status(404).json({ error: 'Nessun token disponibile per questa promozione' });
+    }
+
+    const doc = new PDFDocument({ size: 'A4', autoFirstPage: false, margin: 0 });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=tokens_promo_${promotionId}.pdf`);
+    doc.pipe(res);
+
+    // --- CONFIGURAZIONE GRIGLIA (80mm x 50mm) ---
+    const MM_TO_PT = 2.83465;
+    const CARD_W = 80 * MM_TO_PT;
+    const CARD_H = 50 * MM_TO_PT;
+
+    const PAGE_W = 595.28;
+    const PAGE_H = 841.89;
+    const CONTENT_W = (CARD_W * 2);
+    const CONTENT_H = (CARD_H * 5);
+    const START_X = (PAGE_W - CONTENT_W) / 2;
+    const START_Y = (PAGE_H - CONTENT_H) / 2;
+
+    const LOGO_PATH = path.join(__dirname, '../../frontend/public/camparisoda.png');
+
+    // Funzione: Disegna Retro
+    const drawBackPage = () => {
+      doc.addPage({ size: 'A4', margin: 0 });
+      for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 2; col++) {
+          const x = START_X + (col * CARD_W);
+          const y = START_Y + (row * CARD_H);
+          doc.rect(x, y, CARD_W, CARD_H).fill('#E3001B');
+          doc.rect(x, y, CARD_W, CARD_H).lineWidth(0.5).stroke('white');
+          const logoW = 80;
+          try {
+            doc.image(LOGO_PATH, x + (CARD_W - logoW) / 2, y + (CARD_H - logoW) / 2 - 10, { width: logoW });
+          } catch (e) {
+            doc.fillColor('white').fontSize(14).text('CAMPARI', x, y + CARD_H / 2 - 10, { width: CARD_W, align: 'center' });
+            doc.text('SODA', x, y + CARD_H / 2 + 5, { width: CARD_W, align: 'center' });
+          }
+        }
+      }
+    };
+
+    // Genera pagine
+    const chunkSize = 10;
+    for (let i = 0; i < tokens.length; i += chunkSize) {
+      const chunk = tokens.slice(i, i + chunkSize);
+
+      // PAGINA FRONTE
+      doc.addPage({ size: 'A4', margin: 0 });
+
+      for (let j = 0; j < chunk.length; j++) {
+        const token = chunk[j];
+        const row = Math.floor(j / 2);
+        const col = j % 2;
+
+        const x = START_X + (col * CARD_W);
+        const y = START_Y + (row * CARD_H);
+
+        doc.rect(x, y, CARD_W, CARD_H).fill('white');
+        doc.rect(x, y, CARD_W, CARD_H).lineWidth(0.2).stroke('#ccc');
+
+        doc.font('Helvetica-Bold').fontSize(14).fillColor('#E3001B');
+        doc.text('SCANSIONA E VINCI', x, y + 25, { width: CARD_W, align: 'center' });
+
+        const playUrl = `${APP_URL}/play?token=${token.token_code}`;
+        const qrData = await QRCode.toDataURL(playUrl, { margin: 0 });
+        const qrSize = 75;
+        doc.image(qrData, x + (CARD_W - qrSize) / 2, y + 45, { width: qrSize });
+
+        doc.font('Courier-Bold').fontSize(12).fillColor('black');
+        doc.text(`${token.token_code}`, x, y + 125, { width: CARD_W, align: 'center', characterSpacing: 2 });
+
+        doc.save();
+        doc.moveTo(x + CARD_W - 30, y + CARD_H)
+          .lineTo(x + CARD_W, y + CARD_H)
+          .lineTo(x + CARD_W, y + CARD_H - 30)
+          .fill('#E3001B');
+        doc.restore();
+      }
+
+      // PAGINA RETRO
+      drawBackPage();
+    }
+
+    doc.end();
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore generazione PDF' });
   }
 });
 
