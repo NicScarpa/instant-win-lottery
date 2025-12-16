@@ -98,7 +98,7 @@ export default function PrizeOverview({ promotionId, refreshKey }: Props) {
             <div className="flex items-center justify-between mb-5">
                 <div className="flex items-center gap-2">
                     <span className="text-2xl">🎁</span>
-                    <h3 className="font-bold text-lg text-gray-800">Premi Configurati</h3>
+                    <h3 className="font-bold text-lg text-gray-800">Premi</h3>
                 </div>
                 {prizes.length > 0 && (
                     <span className="text-xs font-medium text-gray-400 bg-gray-100 px-2 py-1 rounded-full">

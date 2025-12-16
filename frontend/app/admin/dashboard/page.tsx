@@ -5,6 +5,7 @@ import TokenGenerator from './components/TokenGenerator';
 import TokenListTable from './components/TokenListTable';
 import StatsCard from './components/StatsCard';
 import PrizeManager from './components/PrizeManager';
+import PrizeList from './components/PrizeList';
 import PromotionSelector from './components/PromotionSelector';
 import PlayLogViewer from './components/PlayLogViewer';
 import PrizeOverview from './components/PrizeOverview';
@@ -321,24 +322,29 @@ export default function AdminDashboardPage() {
                                     </div>
                                 </div>
 
-                                {/* Recent Activity */}
-                                <div>
-                                    <div className="flex justify-between items-center mb-4 px-2">
-                                        <h3 className="font-bold text-gray-800">Ultimi Token Utilizzati</h3>
-                                        <button onClick={() => setCurrentView('token')} className="text-sm text-[#E3001B] font-medium hover:underline">Vedi tutti</button>
+                                {/* Recent Activity + Prize Overview Row */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    {/* Token List */}
+                                    <div>
+                                        <div className="flex justify-between items-center mb-4 px-2">
+                                            <h3 className="font-bold text-gray-800">Ultimi Token Utilizzati</h3>
+                                            <button onClick={() => setCurrentView('token')} className="text-sm text-[#E3001B] font-medium hover:underline">Vedi tutti</button>
+                                        </div>
+                                        <TokenListTable
+                                            promotionId={currentPromotion.id}
+                                            key={`table-${currentPromotion.id}-${dataRefreshKey}`}
+                                            limit={5}
+                                        />
                                     </div>
-                                    <TokenListTable
-                                        promotionId={currentPromotion.id}
-                                        key={`table-${currentPromotion.id}-${dataRefreshKey}`}
-                                        limit={5}
-                                    />
-                                </div>
 
-                                {/* Prize Overview */}
-                                <PrizeOverview
-                                    promotionId={currentPromotion.id}
-                                    refreshKey={dataRefreshKey}
-                                />
+                                    {/* Prize Overview */}
+                                    <div>
+                                        <PrizeOverview
+                                            promotionId={currentPromotion.id}
+                                            refreshKey={dataRefreshKey}
+                                        />
+                                    </div>
+                                </div>
                             </>
                         )}
 
@@ -355,11 +361,19 @@ export default function AdminDashboardPage() {
 
                         {/* VIEW: PREMI */}
                         {currentView === 'premi' && (
-                            <PrizeManager
-                                promotionId={currentPromotion.id}
-                                promotionName={currentPromotion.name}
-                                onPrizeChange={forceDataRefresh}
-                            />
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {/* Aggiungi nuovo premio */}
+                                <PrizeManager
+                                    promotionId={currentPromotion.id}
+                                    promotionName={currentPromotion.name}
+                                    onPrizeChange={forceDataRefresh}
+                                />
+                                {/* Lista premi esistenti con modifica/reset/elimina */}
+                                <PrizeList
+                                    promotionId={currentPromotion.id}
+                                    onPrizeChange={forceDataRefresh}
+                                />
+                            </div>
                         )}
 
                         {/* VIEW: LOG */}

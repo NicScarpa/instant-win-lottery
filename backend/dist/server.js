@@ -275,6 +275,83 @@ app.post('/api/admin/prizes/update', authMiddleware_1.authenticateToken, (0, aut
         res.status(500).json({ error: 'Errore salvataggio premi' });
     }
 });
+// Modifica stock di un singolo premio
+app.put('/api/admin/prizes/:prizeId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { prizeId } = req.params;
+    const { initial_stock, remaining_stock } = req.body;
+    try {
+        const prize = await prisma.prizeType.findUnique({
+            where: { id: Number(prizeId) }
+        });
+        if (!prize) {
+            return res.status(404).json({ error: 'Premio non trovato' });
+        }
+        const updateData = {};
+        if (initial_stock !== undefined) {
+            updateData.initial_stock = Number(initial_stock);
+        }
+        if (remaining_stock !== undefined) {
+            updateData.remaining_stock = Number(remaining_stock);
+        }
+        const updated = await prisma.prizeType.update({
+            where: { id: Number(prizeId) },
+            data: updateData
+        });
+        res.json({ success: true, prize: updated });
+    }
+    catch (err) {
+        console.error('Errore modifica premio:', err);
+        res.status(500).json({ error: 'Errore durante la modifica del premio' });
+    }
+});
+// Reset stock di un premio (remaining = initial)
+app.put('/api/admin/prizes/:prizeId/reset', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { prizeId } = req.params;
+    try {
+        const prize = await prisma.prizeType.findUnique({
+            where: { id: Number(prizeId) }
+        });
+        if (!prize) {
+            return res.status(404).json({ error: 'Premio non trovato' });
+        }
+        const updated = await prisma.prizeType.update({
+            where: { id: Number(prizeId) },
+            data: { remaining_stock: prize.initial_stock }
+        });
+        res.json({
+            success: true,
+            prize: updated,
+            message: `Stock resettato: ${updated.remaining_stock}/${updated.initial_stock}`
+        });
+    }
+    catch (err) {
+        console.error('Errore reset premio:', err);
+        res.status(500).json({ error: 'Errore durante il reset del premio' });
+    }
+});
+// Elimina un premio
+app.delete('/api/admin/prizes/:prizeId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { prizeId } = req.params;
+    try {
+        // Verifica se il premio ha assegnazioni
+        const assignmentsCount = await prisma.prizeAssignment.count({
+            where: { prize_type_id: Number(prizeId) }
+        });
+        if (assignmentsCount > 0) {
+            return res.status(400).json({
+                error: `Impossibile eliminare: questo premio ha ${assignmentsCount} assegnazioni esistenti. Elimina prima le assegnazioni o crea una nuova promozione.`
+            });
+        }
+        await prisma.prizeType.delete({
+            where: { id: Number(prizeId) }
+        });
+        res.json({ success: true, message: 'Premio eliminato con successo' });
+    }
+    catch (err) {
+        console.error('Errore eliminazione premio:', err);
+        res.status(500).json({ error: 'Errore durante l\'eliminazione del premio' });
+    }
+});
 // ==========================================
 // 4. ADMIN: STATS & LOGS (CORRETTO QUI)
 // ==========================================
@@ -484,11 +561,13 @@ app.post('/api/admin/generate-tokens', authMiddleware_1.authenticateToken, (0, a
         const START_X = (PAGE_W - CONTENT_W) / 2;
         const START_Y = (PAGE_H - CONTENT_H) / 2;
         const LOGO_PATH = path.join(__dirname, '../../frontend/public/camparisoda.png');
+        // Font Paths (Assuming folder structure: backend/fonts is sibling to src or dist)
+        // Run context: ts-node src/server.ts -> __dirname = src. Fonts = ../fonts
+        const FONT_BOLD = path.join(__dirname, '../fonts/JosefinSans-Bold.ttf');
+        const FONT_LIGHT = path.join(__dirname, '../fonts/JosefinSans-ExtraLight.ttf');
         // Funzione: Disegna Retro (Pagina intera)
         const drawBackPage = () => {
             doc.addPage({ size: 'A4', margin: 0 });
-            // Sfondo Rosso Totale (opzionale, ma meglio disegnare rettangoli per card per guida taglio)
-            // doc.rect(0, 0, PAGE_W, PAGE_H).fill('#E3001B'); 
             for (let row = 0; row < 5; row++) {
                 for (let col = 0; col < 2; col++) {
                     const x = START_X + (col * CARD_W);
@@ -497,20 +576,14 @@ app.post('/api/admin/generate-tokens', authMiddleware_1.authenticateToken, (0, a
                     doc.rect(x, y, CARD_W, CARD_H).fill('#E3001B');
                     // Guide Taglio (Stroke sottile bianco o nero ridotto)
                     doc.rect(x, y, CARD_W, CARD_H).lineWidth(0.5).stroke('white');
-                    // Campari Logo (Bianco)
-                    // Assumiamo che l'immagine sia il logo. Se è trasparente ok.
-                    // Centrato nella card
+                    // Campari Logo
                     const logoW = 80;
-                    // doc.image non supporta il caricamento sync facile se il path è rotto, ma qui è locale.
                     try {
                         doc.image(LOGO_PATH, x + (CARD_W - logoW) / 2, y + (CARD_H - logoW) / 2 - 10, { width: logoW });
                     }
                     catch (e) {
-                        // Fallback testo se logo manca
-                        doc.fillColor('white').fontSize(14).text('CAMPARI', x, y + CARD_H / 2 - 10, { width: CARD_W, align: 'center' });
-                        doc.text('SODA', x, y + CARD_H / 2 + 5, { width: CARD_W, align: 'center' });
+                        doc.fillColor('white').font('Helvetica-Bold').fontSize(14).text('CAMPARI', x, y + CARD_H / 2 - 10, { width: CARD_W, align: 'center' });
                     }
-                    // Texture pattern (Cerchietti o righe) - Opzionale, semplificato per ora
                 }
             }
         };
@@ -530,27 +603,40 @@ app.post('/api/admin/generate-tokens', authMiddleware_1.authenticateToken, (0, a
                 doc.rect(x, y, CARD_W, CARD_H).fill('white');
                 // Bordo di taglio (grigio chiaro)
                 doc.rect(x, y, CARD_W, CARD_H).lineWidth(0.2).stroke('#ccc');
-                // Header: SCANSIONA E VINCI
-                doc.font('Helvetica-Bold').fontSize(14).fillColor('#E3001B'); // Rosso Campari
-                doc.text('SCANSIONA E VINCI', x, y + 25, { width: CARD_W, align: 'center' });
+                // Header: SCANSIONA E VINCI (Josefin Sans Bold)
+                doc.fillColor('#E3001B');
+                try {
+                    doc.font(FONT_BOLD).fontSize(20);
+                }
+                catch (e) {
+                    doc.font('Helvetica-Bold').fontSize(20);
+                }
+                // Stacked Title
+                doc.text('SCANSIONA', x, y + 15, { width: CARD_W, align: 'center' });
+                doc.text('E VINCI', x, y + 36, { width: CARD_W, align: 'center' });
                 // QR Code
                 const playUrl = `${APP_URL}/play?token=${token.token_code}`;
                 const qrData = await qrcode_1.default.toDataURL(playUrl, { margin: 0 });
-                const qrSize = 75;
-                doc.image(qrData, x + (CARD_W - qrSize) / 2, y + 45, { width: qrSize });
-                // Token Code (Monospace)
-                doc.font('Courier-Bold').fontSize(12).fillColor('black');
-                doc.text(`${token.token_code}`, x, y + 125, { width: CARD_W, align: 'center', characterSpacing: 2 });
+                const qrSize = 85;
+                doc.image(qrData, x + (CARD_W - qrSize) / 2, y + 60, { width: qrSize });
+                // Token Code (Josefin Sans ExtraLight)
+                doc.fillColor('black');
+                try {
+                    doc.font(FONT_LIGHT).fontSize(14); // Leggermente più grande per leggibilità anche se Light
+                }
+                catch (e) {
+                    doc.font('Courier').fontSize(12);
+                }
+                doc.text(`${token.token_code}`, x, y + CARD_H - 22, { width: CARD_W, align: 'center', characterSpacing: 4 });
                 // Angolo Decorativo (Basso Destra) -> Triangolo Rosso
                 doc.save();
-                doc.moveTo(x + CARD_W - 30, y + CARD_H)
+                doc.moveTo(x + CARD_W - 35, y + CARD_H)
                     .lineTo(x + CARD_W, y + CARD_H)
-                    .lineTo(x + CARD_W, y + CARD_H - 30)
+                    .lineTo(x + CARD_W, y + CARD_H - 35)
                     .fill('#E3001B');
                 doc.restore();
             }
             // --- PAGINA RETRO ---
-            // Sempre una pagina intera di loghi, corrispondente alla griglia fronte
             drawBackPage();
         }
         doc.end();
@@ -558,6 +644,97 @@ app.post('/api/admin/generate-tokens', authMiddleware_1.authenticateToken, (0, a
     catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Generation failed' });
+    }
+});
+// Download PDF dei Token Esistenti
+app.get('/api/admin/tokens/pdf/:promotionId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { promotionId } = req.params;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const path = require('path');
+    try {
+        // Recupera tutti i token disponibili per questa promozione
+        const tokens = await prisma.token.findMany({
+            where: {
+                promotion_id: Number(promotionId),
+                status: 'available' // Solo token non ancora usati
+            },
+            orderBy: { created_at: 'asc' }
+        });
+        if (tokens.length === 0) {
+            return res.status(404).json({ error: 'Nessun token disponibile per questa promozione' });
+        }
+        const doc = new pdfkit_1.default({ size: 'A4', autoFirstPage: false, margin: 0 });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=tokens_promo_${promotionId}.pdf`);
+        doc.pipe(res);
+        // --- CONFIGURAZIONE GRIGLIA (80mm x 50mm) ---
+        const MM_TO_PT = 2.83465;
+        const CARD_W = 80 * MM_TO_PT;
+        const CARD_H = 50 * MM_TO_PT;
+        const PAGE_W = 595.28;
+        const PAGE_H = 841.89;
+        const CONTENT_W = (CARD_W * 2);
+        const CONTENT_H = (CARD_H * 5);
+        const START_X = (PAGE_W - CONTENT_W) / 2;
+        const START_Y = (PAGE_H - CONTENT_H) / 2;
+        const LOGO_PATH = path.join(__dirname, '../../frontend/public/camparisoda.png');
+        // Funzione: Disegna Retro
+        const drawBackPage = () => {
+            doc.addPage({ size: 'A4', margin: 0 });
+            for (let row = 0; row < 5; row++) {
+                for (let col = 0; col < 2; col++) {
+                    const x = START_X + (col * CARD_W);
+                    const y = START_Y + (row * CARD_H);
+                    doc.rect(x, y, CARD_W, CARD_H).fill('#E3001B');
+                    doc.rect(x, y, CARD_W, CARD_H).lineWidth(0.5).stroke('white');
+                    const logoW = 80;
+                    try {
+                        doc.image(LOGO_PATH, x + (CARD_W - logoW) / 2, y + (CARD_H - logoW) / 2 - 10, { width: logoW });
+                    }
+                    catch (e) {
+                        doc.fillColor('white').fontSize(14).text('CAMPARI', x, y + CARD_H / 2 - 10, { width: CARD_W, align: 'center' });
+                        doc.text('SODA', x, y + CARD_H / 2 + 5, { width: CARD_W, align: 'center' });
+                    }
+                }
+            }
+        };
+        // Genera pagine
+        const chunkSize = 10;
+        for (let i = 0; i < tokens.length; i += chunkSize) {
+            const chunk = tokens.slice(i, i + chunkSize);
+            // PAGINA FRONTE
+            doc.addPage({ size: 'A4', margin: 0 });
+            for (let j = 0; j < chunk.length; j++) {
+                const token = chunk[j];
+                const row = Math.floor(j / 2);
+                const col = j % 2;
+                const x = START_X + (col * CARD_W);
+                const y = START_Y + (row * CARD_H);
+                doc.rect(x, y, CARD_W, CARD_H).fill('white');
+                doc.rect(x, y, CARD_W, CARD_H).lineWidth(0.2).stroke('#ccc');
+                doc.font('Helvetica-Bold').fontSize(14).fillColor('#E3001B');
+                doc.text('SCANSIONA E VINCI', x, y + 25, { width: CARD_W, align: 'center' });
+                const playUrl = `${APP_URL}/play?token=${token.token_code}`;
+                const qrData = await qrcode_1.default.toDataURL(playUrl, { margin: 0 });
+                const qrSize = 75;
+                doc.image(qrData, x + (CARD_W - qrSize) / 2, y + 45, { width: qrSize });
+                doc.font('Courier-Bold').fontSize(12).fillColor('black');
+                doc.text(`${token.token_code}`, x, y + 125, { width: CARD_W, align: 'center', characterSpacing: 2 });
+                doc.save();
+                doc.moveTo(x + CARD_W - 30, y + CARD_H)
+                    .lineTo(x + CARD_W, y + CARD_H)
+                    .lineTo(x + CARD_W, y + CARD_H - 30)
+                    .fill('#E3001B');
+                doc.restore();
+            }
+            // PAGINA RETRO
+            drawBackPage();
+        }
+        doc.end();
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Errore generazione PDF' });
     }
 });
 // ==========================================

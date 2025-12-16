@@ -303,6 +303,97 @@ app.post('/api/admin/prizes/update', authenticateToken, authorizeRole('admin'), 
   }
 });
 
+// Modifica stock di un singolo premio
+app.put('/api/admin/prizes/:prizeId', authenticateToken, authorizeRole('admin'), async (req, res) => {
+  const { prizeId } = req.params;
+  const { initial_stock, remaining_stock } = req.body;
+
+  try {
+    const prize = await prisma.prizeType.findUnique({
+      where: { id: Number(prizeId) }
+    });
+
+    if (!prize) {
+      return res.status(404).json({ error: 'Premio non trovato' });
+    }
+
+    const updateData: { initial_stock?: number; remaining_stock?: number } = {};
+
+    if (initial_stock !== undefined) {
+      updateData.initial_stock = Number(initial_stock);
+    }
+    if (remaining_stock !== undefined) {
+      updateData.remaining_stock = Number(remaining_stock);
+    }
+
+    const updated = await prisma.prizeType.update({
+      where: { id: Number(prizeId) },
+      data: updateData
+    });
+
+    res.json({ success: true, prize: updated });
+  } catch (err) {
+    console.error('Errore modifica premio:', err);
+    res.status(500).json({ error: 'Errore durante la modifica del premio' });
+  }
+});
+
+// Reset stock di un premio (remaining = initial)
+app.put('/api/admin/prizes/:prizeId/reset', authenticateToken, authorizeRole('admin'), async (req, res) => {
+  const { prizeId } = req.params;
+
+  try {
+    const prize = await prisma.prizeType.findUnique({
+      where: { id: Number(prizeId) }
+    });
+
+    if (!prize) {
+      return res.status(404).json({ error: 'Premio non trovato' });
+    }
+
+    const updated = await prisma.prizeType.update({
+      where: { id: Number(prizeId) },
+      data: { remaining_stock: prize.initial_stock }
+    });
+
+    res.json({
+      success: true,
+      prize: updated,
+      message: `Stock resettato: ${updated.remaining_stock}/${updated.initial_stock}`
+    });
+  } catch (err) {
+    console.error('Errore reset premio:', err);
+    res.status(500).json({ error: 'Errore durante il reset del premio' });
+  }
+});
+
+// Elimina un premio
+app.delete('/api/admin/prizes/:prizeId', authenticateToken, authorizeRole('admin'), async (req, res) => {
+  const { prizeId } = req.params;
+
+  try {
+    // Verifica se il premio ha assegnazioni
+    const assignmentsCount = await prisma.prizeAssignment.count({
+      where: { prize_type_id: Number(prizeId) }
+    });
+
+    if (assignmentsCount > 0) {
+      return res.status(400).json({
+        error: `Impossibile eliminare: questo premio ha ${assignmentsCount} assegnazioni esistenti. Elimina prima le assegnazioni o crea una nuova promozione.`
+      });
+    }
+
+    await prisma.prizeType.delete({
+      where: { id: Number(prizeId) }
+    });
+
+    res.json({ success: true, message: 'Premio eliminato con successo' });
+  } catch (err) {
+    console.error('Errore eliminazione premio:', err);
+    res.status(500).json({ error: 'Errore durante l\'eliminazione del premio' });
+  }
+});
+
 // ==========================================
 // 4. ADMIN: STATS & LOGS (CORRETTO QUI)
 // ==========================================
@@ -537,13 +628,14 @@ app.post('/api/admin/generate-tokens', authenticateToken, authorizeRole('admin')
     const START_Y = (PAGE_H - CONTENT_H) / 2;
 
     const LOGO_PATH = path.join(__dirname, '../../frontend/public/camparisoda.png');
+    // Font Paths (Assuming folder structure: backend/fonts is sibling to src or dist)
+    // Run context: ts-node src/server.ts -> __dirname = src. Fonts = ../fonts
+    const FONT_BOLD = path.join(__dirname, '../fonts/JosefinSans-Bold.ttf');
+    const FONT_LIGHT = path.join(__dirname, '../fonts/JosefinSans-ExtraLight.ttf');
 
     // Funzione: Disegna Retro (Pagina intera)
     const drawBackPage = () => {
       doc.addPage({ size: 'A4', margin: 0 });
-
-      // Sfondo Rosso Totale (opzionale, ma meglio disegnare rettangoli per card per guida taglio)
-      // doc.rect(0, 0, PAGE_W, PAGE_H).fill('#E3001B'); 
 
       for (let row = 0; row < 5; row++) {
         for (let col = 0; col < 2; col++) {
@@ -556,20 +648,13 @@ app.post('/api/admin/generate-tokens', authenticateToken, authorizeRole('admin')
           // Guide Taglio (Stroke sottile bianco o nero ridotto)
           doc.rect(x, y, CARD_W, CARD_H).lineWidth(0.5).stroke('white');
 
-          // Campari Logo (Bianco)
-          // Assumiamo che l'immagine sia il logo. Se è trasparente ok.
-          // Centrato nella card
+          // Campari Logo
           const logoW = 80;
-          // doc.image non supporta il caricamento sync facile se il path è rotto, ma qui è locale.
           try {
             doc.image(LOGO_PATH, x + (CARD_W - logoW) / 2, y + (CARD_H - logoW) / 2 - 10, { width: logoW });
           } catch (e) {
-            // Fallback testo se logo manca
-            doc.fillColor('white').fontSize(14).text('CAMPARI', x, y + CARD_H / 2 - 10, { width: CARD_W, align: 'center' });
-            doc.text('SODA', x, y + CARD_H / 2 + 5, { width: CARD_W, align: 'center' });
+            doc.fillColor('white').font('Helvetica-Bold').fontSize(14).text('CAMPARI', x, y + CARD_H / 2 - 10, { width: CARD_W, align: 'center' });
           }
-
-          // Texture pattern (Cerchietti o righe) - Opzionale, semplificato per ora
         }
       }
     };
@@ -595,36 +680,43 @@ app.post('/api/admin/generate-tokens', authenticateToken, authorizeRole('admin')
         // Bordo di taglio (grigio chiaro)
         doc.rect(x, y, CARD_W, CARD_H).lineWidth(0.2).stroke('#ccc');
 
-        // Header: SCANSIONA E VINCI
-        // Usiamo stroke per "ingrassare" il font standard se necessario, o solo size up
-        doc.font('Helvetica-Bold').fontSize(20).fillColor('#E3001B');
-        // Mock visuale aveva testo molto grande.
+        // Header: SCANSIONA E VINCI (Josefin Sans Bold)
+        doc.fillColor('#E3001B');
+        try {
+          doc.font(FONT_BOLD).fontSize(20);
+        } catch (e) {
+          doc.font('Helvetica-Bold').fontSize(20);
+        }
+
+        // Stacked Title
         doc.text('SCANSIONA', x, y + 15, { width: CARD_W, align: 'center' });
-        doc.text('E VINCI', x, y + 35, { width: CARD_W, align: 'center' });
+        doc.text('E VINCI', x, y + 36, { width: CARD_W, align: 'center' });
 
         // QR Code
         const playUrl = `${APP_URL}/play?token=${token.token_code}`;
         const qrData = await QRCode.toDataURL(playUrl, { margin: 0 });
-        // QR più grande
         const qrSize = 85;
-        doc.image(qrData, x + (CARD_W - qrSize) / 2, y + 55, { width: qrSize });
+        doc.image(qrData, x + (CARD_W - qrSize) / 2, y + 60, { width: qrSize });
 
-        // Token Code (Monospace)
-        doc.font('Courier-Bold').fontSize(14).fillColor('black');
-        doc.text(`${token.token_code}`, x, y + CARD_H - 20, { width: CARD_W, align: 'center', characterSpacing: 3 });
+        // Token Code (Josefin Sans ExtraLight)
+        doc.fillColor('black');
+        try {
+          doc.font(FONT_LIGHT).fontSize(14); // Leggermente più grande per leggibilità anche se Light
+        } catch (e) {
+          doc.font('Courier').fontSize(12);
+        }
+        doc.text(`${token.token_code}`, x, y + CARD_H - 22, { width: CARD_W, align: 'center', characterSpacing: 4 });
 
-        // Angolo Decorativo (Basso Destra) -> Striscia Diagonale più spessa
+        // Angolo Decorativo (Basso Destra) -> Triangolo Rosso
         doc.save();
-        // Disegniamo un triangolo che copre l'angolo, ma facciamo attenzione a non coprire il testo (il testo è centrato, l'angolo è a dx)
-        doc.moveTo(x + CARD_W - 40, y + CARD_H)
+        doc.moveTo(x + CARD_W - 35, y + CARD_H)
           .lineTo(x + CARD_W, y + CARD_H)
-          .lineTo(x + CARD_W, y + CARD_H - 40)
+          .lineTo(x + CARD_W, y + CARD_H - 35)
           .fill('#E3001B');
         doc.restore();
       }
 
       // --- PAGINA RETRO ---
-      // Sempre una pagina intera di loghi, corrispondente alla griglia fronte
       drawBackPage();
     }
 
