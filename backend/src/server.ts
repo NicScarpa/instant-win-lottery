@@ -637,27 +637,27 @@ app.post('/api/admin/generate-tokens', authenticateToken, authorizeRole('admin')
     // Colore Campari
     const CAMPARI_RED = '#D31418';
 
-    // Helper: Disegna Pattern Bottiglie (rotazione 0 gradi)
+    // Helper: Disegna Pattern Bottiglie (stile CSS background-repeat)
     const drawPattern = (x: number, y: number, w: number, h: number, opacity: number, texturePath: string) => {
       doc.save();
       doc.rect(x, y, w, h).clip();
       doc.opacity(opacity);
 
-      const patCols = 4;
-      const patRows = 5;
-      const patW = w / patCols;
-      const patH = h / patRows;
+      // Pattern size: 12mm come da template HTML
+      const BOTTLE_W = 12 * MM_TO_PT; // ~34pt
+      const BOTTLE_H = BOTTLE_W * 2.5; // Proporzione bottiglia (altezza > larghezza)
 
-      for (let pr = 0; pr < patRows; pr++) {
-        for (let pc = 0; pc < patCols; pc++) {
-          const offsetX = (pr % 2 === 0) ? 0 : (patW / 2);
+      // Calcola quante colonne e righe servono per coprire l'area
+      const cols = Math.ceil(w / BOTTLE_W) + 1;
+      const rows = Math.ceil(h / BOTTLE_H) + 1;
+
+      // Disegna pattern a griglia uniforme (come CSS background-repeat)
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
           try {
-            const bW = patW * 0.7;
-            const bX = x + (pc * patW) + offsetX + (patW - bW) / 2;
-            const bY = y + (pr * patH) + (patH - bW) / 2;
-
-            // Nessuna rotazione (0 gradi)
-            doc.image(texturePath, bX, bY, { width: bW });
+            const bX = x + (col * BOTTLE_W);
+            const bY = y + (row * BOTTLE_H);
+            doc.image(texturePath, bX, bY, { width: BOTTLE_W });
           } catch (e) { /* Ignora errori immagine */ }
         }
       }
@@ -677,8 +677,8 @@ app.post('/api/admin/generate-tokens', authenticateToken, authorizeRole('admin')
         // 1. Sfondo Rosso Campari
         doc.rect(x, y, CARD_W, CARD_H).fill(CAMPARI_RED);
 
-        // 2. Pattern tono su tono (opacity 0.15) - usa bottiglia rossa per retro
-        drawPattern(x, y, CARD_W, CARD_H, 0.15, TEXTURE_PATH);
+        // 2. Pattern tono su tono (opacity 0.3) - usa bottiglia rossa per retro
+        drawPattern(x, y, CARD_W, CARD_H, 0.3, TEXTURE_PATH);
 
         // 3. Logo Bianco Centrato
         const logoW = 100;
@@ -827,27 +827,27 @@ app.get('/api/admin/tokens/pdf/:promotionId', authenticateToken, authorizeRole('
     // Colore Campari
     const CAMPARI_RED = '#D31418';
 
-    // Helper: Disegna Pattern Bottiglie (rotazione 0 gradi)
+    // Helper: Disegna Pattern Bottiglie (stile CSS background-repeat)
     const drawPattern = (x: number, y: number, w: number, h: number, opacity: number, texturePath: string) => {
       doc.save();
       doc.rect(x, y, w, h).clip();
       doc.opacity(opacity);
 
-      const patCols = 4;
-      const patRows = 5;
-      const patW = w / patCols;
-      const patH = h / patRows;
+      // Pattern size: 12mm come da template HTML
+      const BOTTLE_W = 12 * MM_TO_PT; // ~34pt
+      const BOTTLE_H = BOTTLE_W * 2.5; // Proporzione bottiglia (altezza > larghezza)
 
-      for (let pr = 0; pr < patRows; pr++) {
-        for (let pc = 0; pc < patCols; pc++) {
-          const offsetX = (pr % 2 === 0) ? 0 : (patW / 2);
+      // Calcola quante colonne e righe servono per coprire l'area
+      const cols = Math.ceil(w / BOTTLE_W) + 1;
+      const rows = Math.ceil(h / BOTTLE_H) + 1;
+
+      // Disegna pattern a griglia uniforme (come CSS background-repeat)
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
           try {
-            const bW = patW * 0.7;
-            const bX = x + (pc * patW) + offsetX + (patW - bW) / 2;
-            const bY = y + (pr * patH) + (patH - bW) / 2;
-
-            // Nessuna rotazione (0 gradi)
-            doc.image(texturePath, bX, bY, { width: bW });
+            const bX = x + (col * BOTTLE_W);
+            const bY = y + (row * BOTTLE_H);
+            doc.image(texturePath, bX, bY, { width: BOTTLE_W });
           } catch (e) { /* Ignora errori immagine */ }
         }
       }
@@ -867,8 +867,8 @@ app.get('/api/admin/tokens/pdf/:promotionId', authenticateToken, authorizeRole('
         // 1. Sfondo Rosso Campari
         doc.rect(x, y, CARD_W, CARD_H).fill(CAMPARI_RED);
 
-        // 2. Pattern tono su tono (opacity 0.15) - usa bottiglia rossa per retro
-        drawPattern(x, y, CARD_W, CARD_H, 0.15, TEXTURE_PATH);
+        // 2. Pattern tono su tono (opacity 0.3) - usa bottiglia rossa per retro
+        drawPattern(x, y, CARD_W, CARD_H, 0.3, TEXTURE_PATH);
 
         // 3. Logo Bianco Centrato
         const logoW = 100;
