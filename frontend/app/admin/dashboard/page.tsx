@@ -307,19 +307,6 @@ export default function AdminDashboardPage() {
                                     key={`stats-${currentPromotion.id}-${dataRefreshKey}`}
                                 />
 
-                                {/* Recent Activity - Ultimi Token Utilizzati */}
-                                <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h3 className="font-bold text-gray-800">Ultimi Token Utilizzati</h3>
-                                        <button onClick={() => setCurrentView('token')} className="text-sm text-[#E3001B] font-medium hover:underline">Gestione Token</button>
-                                    </div>
-                                    <UsedTokensList
-                                        promotionId={currentPromotion.id}
-                                        key={`used-tokens-${currentPromotion.id}-${dataRefreshKey}`}
-                                        limit={5}
-                                    />
-                                </div>
-
                                 {/* Live Leaderboard */}
                                 <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
                                     <div className="flex justify-between items-center mb-4">
@@ -342,6 +329,19 @@ export default function AdminDashboardPage() {
                                     <AdminLeaderboard
                                         promotionId={currentPromotion.id}
                                         refreshKey={dataRefreshKey}
+                                    />
+                                </div>
+
+                                {/* Recent Activity - Ultimi Token Utilizzati */}
+                                <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <h3 className="font-bold text-gray-800">Ultimi Token Utilizzati</h3>
+                                        <button onClick={() => setCurrentView('token')} className="text-sm text-[#E3001B] font-medium hover:underline">Gestione Token</button>
+                                    </div>
+                                    <UsedTokensList
+                                        promotionId={currentPromotion.id}
+                                        key={`used-tokens-${currentPromotion.id}-${dataRefreshKey}`}
+                                        limit={5}
                                     />
                                 </div>
                             </>

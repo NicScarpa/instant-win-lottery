@@ -429,8 +429,11 @@ function PlayContent() {
                 {gameState === 'ERROR' && (
                     <div className="bg-white text-black p-8 text-center border-4 border-black">
                         <h1 className="text-3xl font-bold mb-4 uppercase">Ops!</h1>
-                        <p className="font-bold mb-6">{errorMessage}</p>
-                        <button onClick={() => window.location.reload()} className="bg-black text-white px-6 py-3 font-bold uppercase hover:bg-gray-800">Ricarica</button>
+                        <p className="font-bold mb-4">{errorMessage}</p>
+                        <p className="text-sm font-light text-gray-500 leading-relaxed">
+                            Il codice è utilizzabile solo una volta,<br/>
+                            acquista un altro Camparino per giocare ancora 💪
+                        </p>
                     </div>
                 )}
 

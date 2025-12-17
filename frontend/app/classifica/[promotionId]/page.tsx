@@ -82,9 +82,6 @@ export default function PublicLeaderboardPage() {
                 />
                 <div className="text-center">
                     <h1 className="text-3xl font-black uppercase tracking-tighter">Classifica</h1>
-                    {promotion && (
-                        <p className="text-white/80 text-sm font-medium mt-1">{promotion.name}</p>
-                    )}
                 </div>
             </header>
 

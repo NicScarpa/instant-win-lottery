@@ -697,14 +697,16 @@ app.post('/api/admin/generate-tokens', authenticateToken, authorizeRole('admin')
     const BACK_TEMPLATE = path.join(__dirname, '../assets/retro-token.png');
     const FONT_CODE = path.join(__dirname, '../fonts/Roboto-Medium.ttf');
 
-    // Funzione: Disegna pagina Retro (solo immagine template)
+    // Funzione: Disegna pagina Retro (colonne specchiate per stampa fronte/retro)
     const drawBackPage = (cardCount: number) => {
       doc.addPage({ size: 'A4', margin: 0 });
 
       for (let j = 0; j < cardCount; j++) {
         const row = Math.floor(j / COLUMNS);
         const col = j % COLUMNS;
-        const x = START_X + (col * CARD_W);
+        // Specchia la colonna per allineamento corretto in stampa fronte/retro
+        const mirroredCol = (COLUMNS - 1) - col;
+        const x = START_X + (mirroredCol * CARD_W);
         const y = START_Y + (row * CARD_H);
 
         // Immagine retro scalata a 50x80mm
@@ -839,14 +841,16 @@ app.get('/api/admin/tokens/pdf/:promotionId', authenticateToken, authorizeRole('
     const BACK_TEMPLATE = path.join(__dirname, '../assets/retro-token.png');
     const FONT_CODE = path.join(__dirname, '../fonts/Roboto-Medium.ttf');
 
-    // Funzione: Disegna pagina Retro (solo immagine template)
+    // Funzione: Disegna pagina Retro (colonne specchiate per stampa fronte/retro)
     const drawBackPage = (cardCount: number) => {
       doc.addPage({ size: 'A4', margin: 0 });
 
       for (let j = 0; j < cardCount; j++) {
         const row = Math.floor(j / COLUMNS);
         const col = j % COLUMNS;
-        const x = START_X + (col * CARD_W);
+        // Specchia la colonna per allineamento corretto in stampa fronte/retro
+        const mirroredCol = (COLUMNS - 1) - col;
+        const x = START_X + (mirroredCol * CARD_W);
         const y = START_Y + (row * CARD_H);
 
         // Immagine retro scalata a 50x80mm
