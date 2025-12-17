@@ -3,6 +3,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
 import TokenGenerator from './components/TokenGenerator';
 import TokenListTable from './components/TokenListTable';
+import UsedTokensList from './components/UsedTokensList';
 import StatsCard from './components/StatsCard';
 import PrizeManager from './components/PrizeManager';
 import PrizeList from './components/PrizeList';
@@ -299,44 +300,21 @@ export default function AdminDashboardPage() {
                                     refreshKey={dataRefreshKey}
                                 />
 
-                                {/* Stats & Quick Actions Row */}
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                    {/* Stats Card (Takes 2 cols on md) */}
-                                    <div className="md:col-span-2">
-                                        <StatsCard
-                                            promotionId={currentPromotion.id}
-                                            key={`stats-${currentPromotion.id}-${dataRefreshKey}`}
-                                        />
-                                    </div>
+                                {/* Stats Card - Full Width */}
+                                <StatsCard
+                                    promotionId={currentPromotion.id}
+                                    key={`stats-${currentPromotion.id}-${dataRefreshKey}`}
+                                />
 
-                                    {/* Quick Actions / Generator */}
-                                    <div className="md:col-span-1">
-                                        <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100 h-full flex flex-col justify-between relative overflow-hidden group">
-                                            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                                                <svg className="w-24 h-24" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" /></svg>
-                                            </div>
-                                            <div>
-                                                <h3 className="font-bold text-lg mb-1">Nuovo Token</h3>
-                                                <p className="text-sm text-gray-500 mb-4">Genera un codice di gioco rapido</p>
-                                            </div>
-                                            <TokenGenerator
-                                                promotionId={currentPromotion.id}
-                                                promotionName={currentPromotion.name}
-                                                onOperationSuccess={forceDataRefresh}
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Recent Activity */}
-                                <div>
-                                    <div className="flex justify-between items-center mb-4 px-2">
+                                {/* Recent Activity - Ultimi Token Utilizzati */}
+                                <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
+                                    <div className="flex justify-between items-center mb-4">
                                         <h3 className="font-bold text-gray-800">Ultimi Token Utilizzati</h3>
-                                        <button onClick={() => setCurrentView('token')} className="text-sm text-[#E3001B] font-medium hover:underline">Vedi tutti</button>
+                                        <button onClick={() => setCurrentView('token')} className="text-sm text-[#E3001B] font-medium hover:underline">Gestione Token</button>
                                     </div>
-                                    <TokenListTable
+                                    <UsedTokensList
                                         promotionId={currentPromotion.id}
-                                        key={`table-${currentPromotion.id}-${dataRefreshKey}`}
+                                        key={`used-tokens-${currentPromotion.id}-${dataRefreshKey}`}
                                         limit={5}
                                     />
                                 </div>
@@ -345,12 +323,34 @@ export default function AdminDashboardPage() {
 
                         {/* VIEW: TOKEN */}
                         {currentView === 'token' && (
-                            <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
-                                <h3 className="font-bold text-lg mb-6">Gestione Token</h3>
-                                <TokenListTable
-                                    promotionId={currentPromotion.id}
-                                    key={`table-full-${currentPromotion.id}-${dataRefreshKey}`}
-                                />
+                            <div className="space-y-6">
+                                {/* Gestione Token - Genera e Scarica */}
+                                <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                                    <div className="flex items-center gap-3 mb-6">
+                                        <div className="p-3 bg-[#E3001B]/10 rounded-xl">
+                                            <svg className="w-6 h-6 text-[#E3001B]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                                            </svg>
+                                        </div>
+                                        <div>
+                                            <h3 className="font-bold text-lg">Gestione Token</h3>
+                                            <p className="text-sm text-gray-500">Genera nuovi token e scarica PDF per la stampa</p>
+                                        </div>
+                                    </div>
+                                    <TokenGenerator
+                                        promotionId={currentPromotion.id}
+                                        promotionName={currentPromotion.name}
+                                        onOperationSuccess={forceDataRefresh}
+                                    />
+                                </div>
+
+                                {/* Lista Token Generati */}
+                                <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                                    <TokenListTable
+                                        promotionId={currentPromotion.id}
+                                        key={`table-full-${currentPromotion.id}-${dataRefreshKey}`}
+                                    />
+                                </div>
                             </div>
                         )}
 

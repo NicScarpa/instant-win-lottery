@@ -14,13 +14,13 @@ interface TokenData {
 
 export default function TokenListTable({ promotionId, limit }: { promotionId: string; limit?: number }) {
     const [tokens, setTokens] = useState<TokenData[]>([]);
+    const [totalTokens, setTotalTokens] = useState(0); // Conteggio totale reale dal backend
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
     // STATI PER LA PAGINAZIONE
     const [currentPage, setCurrentPage] = useState(1);
-    const itemsPerPage = limit || 10; // Use limit if provided, else default to 10 for paginated view? 
-    // Actually if limit is provided, we probably just want to show top N and NO pagination controls.
+    const itemsPerPage = limit || 10;
 
     useEffect(() => {
         if (!promotionId) return;
@@ -47,6 +47,7 @@ export default function TokenListTable({ promotionId, limit }: { promotionId: st
                 if (res.ok) {
                     const data = await res.json();
                     setTokens(data.tokens || []);
+                    setTotalTokens(data.total || 0); // Usa il conteggio totale dal backend
                     setCurrentPage(1);
                 } else {
                     const errData = await res.json();
@@ -72,7 +73,7 @@ export default function TokenListTable({ promotionId, limit }: { promotionId: st
         ? tokens.slice(0, limit)
         : tokens.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-    const totalPages = Math.ceil(tokens.length / itemsPerPage);
+    const totalPages = Math.ceil(totalTokens / itemsPerPage);
 
     const handlePrev = () => {
         if (currentPage > 1) setCurrentPage(prev => prev - 1);
@@ -85,7 +86,7 @@ export default function TokenListTable({ promotionId, limit }: { promotionId: st
     if (loading) return <div className="text-gray-400 text-xs mt-4 animate-pulse">Caricamento...</div>;
     if (error) return <div className="text-red-500 text-xs mt-4">{error}</div>;
 
-    if (tokens.length === 0) {
+    if (totalTokens === 0 && tokens.length === 0) {
         return <p className="text-gray-400 text-sm italic py-4">Nessun token ancora generato.</p>;
     }
 
@@ -94,7 +95,7 @@ export default function TokenListTable({ promotionId, limit }: { promotionId: st
             {!isLimitedView && (
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-bold text-gray-800">
-                        Token Generati <span className="text-sm font-normal text-gray-500">({tokens.length} totali)</span>
+                        Token Generati <span className="text-sm font-normal text-gray-500">({totalTokens} totali)</span>
                     </h3>
                     <span className="text-xs text-gray-400">
                         Pagina {currentPage} di {totalPages || 1}

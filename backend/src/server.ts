@@ -515,6 +515,69 @@ app.get('/api/admin/tokens/:promotionId', authenticateToken, authorizeRole('admi
   }
 });
 
+// Token Utilizzati con dettagli giocata (per sezione "Ultimi Token Utilizzati")
+app.get('/api/admin/used-tokens/:promotionId', authenticateToken, authorizeRole('admin'), async (req, res) => {
+  const { promotionId } = req.params;
+  const { limit = 10 } = req.query;
+  const pid = Number(promotionId);
+
+  try {
+    // Recupera i token utilizzati con tutte le info correlate
+    const usedTokens = await prisma.token.findMany({
+      where: {
+        promotion_id: pid,
+        status: 'used'
+      },
+      include: {
+        play: {
+          include: {
+            customer: {
+              select: {
+                first_name: true,
+                last_name: true,
+                phone_number: true
+              }
+            },
+            prize_assignment: {
+              include: {
+                prize_type: {
+                  select: {
+                    name: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      orderBy: { used_at: 'desc' },
+      take: Number(limit)
+    });
+
+    // Formatta la risposta per il frontend
+    const formatted = usedTokens.map(token => ({
+      id: token.id,
+      token_code: token.token_code,
+      used_at: token.used_at,
+      is_winner: token.play?.is_winner || false,
+      customer: token.play?.customer ? {
+        first_name: token.play.customer.first_name,
+        last_name: token.play.customer.last_name,
+        phone_number: token.play.customer.phone_number
+      } : null,
+      prize_name: token.play?.prize_assignment?.prize_type?.name || null
+    }));
+
+    res.json({
+      tokens: formatted,
+      total: formatted.length
+    });
+  } catch (err) {
+    console.error('Errore fetch used tokens:', err);
+    res.status(500).json({ error: 'Errore recupero token utilizzati' });
+  }
+});
+
 // Reset Token - Elimina tutti i token e le giocate di una promozione
 app.delete('/api/admin/tokens/reset/:promotionId', authenticateToken, authorizeRole('admin'), async (req, res) => {
   const { promotionId } = req.params;
