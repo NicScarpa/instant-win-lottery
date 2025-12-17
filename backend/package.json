@@ -6,7 +6,7 @@
     "seed": "ts-node prisma/seed.ts"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp -r assets dist/ && cp -r fonts dist/",
     "start": "node dist/server.js",
     "dev": "ts-node src/server.ts",
     "postinstall": "prisma generate",

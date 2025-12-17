@@ -627,9 +627,9 @@ app.post('/api/admin/generate-tokens', authenticateToken, authorizeRole('admin')
     const START_X = (PAGE_W - CONTENT_W) / 2;
     const START_Y = (PAGE_H - CONTENT_H) / 2;
 
-    // Paths risorse - Template predesegnati
-    const FRONT_TEMPLATE = path.join(__dirname, '../../frontend/public/fronte-token.png');
-    const BACK_TEMPLATE = path.join(__dirname, '../../frontend/public/retro-token.png');
+    // Paths risorse - Template predesegnati (in backend/assets per deploy)
+    const FRONT_TEMPLATE = path.join(__dirname, '../assets/fronte-token.png');
+    const BACK_TEMPLATE = path.join(__dirname, '../assets/retro-token.png');
     const FONT_CODE = path.join(__dirname, '../fonts/Roboto-Medium.ttf');
 
     // Funzione: Disegna pagina Retro (solo immagine template)
@@ -769,9 +769,9 @@ app.get('/api/admin/tokens/pdf/:promotionId', authenticateToken, authorizeRole('
     const START_X = (PAGE_W - CONTENT_W) / 2;
     const START_Y = (PAGE_H - CONTENT_H) / 2;
 
-    // Paths risorse - Template predesegnati
-    const FRONT_TEMPLATE = path.join(__dirname, '../../frontend/public/fronte-token.png');
-    const BACK_TEMPLATE = path.join(__dirname, '../../frontend/public/retro-token.png');
+    // Paths risorse - Template predesegnati (in backend/assets per deploy)
+    const FRONT_TEMPLATE = path.join(__dirname, '../assets/fronte-token.png');
+    const BACK_TEMPLATE = path.join(__dirname, '../assets/retro-token.png');
     const FONT_CODE = path.join(__dirname, '../fonts/Roboto-Medium.ttf');
 
     // Funzione: Disegna pagina Retro (solo immagine template)
