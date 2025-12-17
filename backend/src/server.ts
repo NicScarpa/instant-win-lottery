@@ -89,34 +89,76 @@ app.use(express.json());
 app.use(cookieParser());
 
 // --- RATE LIMITING ---
+// Strategia: limiti alti per IP (tutti i clienti del locale condividono WiFi),
+// limiti stretti per singolo customer (prevenzione abusi individuali)
+
 const isDev = process.env.NODE_ENV !== 'production';
 
-// Limiter generale per tutte le API (più permissivo per uso normale)
+// 1. Limiter generale (solo protezione DDoS) - molto permissivo
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minuti
-  max: isDev ? 1000 : 500, // 500 richieste in prod, 1000 in dev
-  message: { error: 'Troppe richieste, riprova tra qualche minuto' },
+  max: 5000, // 5000 richieste per IP - protegge solo da attacchi
+  message: {
+    error: 'Servizio temporaneamente non disponibile. Riprova tra qualche minuto.',
+    code: 'RATE_LIMIT_GENERAL'
+  },
   standardHeaders: true,
   legacyHeaders: false,
-  skip: () => isDev && process.env.SKIP_RATE_LIMIT === 'true', // Bypass opzionale in dev
+  skip: () => isDev && process.env.SKIP_RATE_LIMIT === 'true',
 });
 
-// Limiter più restrittivo per login (prevenzione brute force)
+// 2. Limiter login admin (prevenzione brute force)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minuti
-  max: isDev ? 50 : 10, // 10 tentativi in prod, 50 in dev
-  message: { error: 'Troppi tentativi di login, riprova tra 15 minuti' },
+  max: 15, // 15 tentativi - ragionevole per admin
+  message: {
+    error: 'Troppi tentativi di accesso. Riprova tra 15 minuti.',
+    code: 'RATE_LIMIT_AUTH'
+  },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// Limiter per le giocate (prevenzione abusi)
-const playLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minuto
-  max: isDev ? 60 : 30, // 30 giocate/min in prod, 60 in dev
-  message: { error: 'Troppe richieste di gioco, attendi un momento' },
+// 3. Limiter registrazioni (per IP, ma alto per locali affollati)
+const registrationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minuti
+  max: 200, // 200 registrazioni per IP (~13/min, sufficiente per locale affollato)
+  message: {
+    error: 'Troppe registrazioni dalla tua rete. Attendi qualche minuto.',
+    code: 'RATE_LIMIT_REGISTRATION'
+  },
   standardHeaders: true,
   legacyHeaders: false,
+});
+
+// 4. Limiter giocate PER CUSTOMER (basato su JWT, non IP!)
+// Questo è il limite più importante: impedisce abusi individuali
+const playLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minuto
+  max: 5, // 5 giocate al minuto per singolo customer
+  message: {
+    error: 'Hai giocato troppo velocemente! Attendi qualche secondo prima di riprovare.',
+    code: 'RATE_LIMIT_PLAY'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Usa il customer ID dal JWT invece dell'IP
+  keyGenerator: (req: any) => {
+    // Prova a estrarre customer ID dal token JWT
+    const customerToken = req.cookies?.customerToken || req.headers.authorization?.replace('Bearer ', '');
+    if (customerToken) {
+      try {
+        const decoded = jwt.verify(customerToken, JWT_SECRET) as { customerId?: number };
+        if (decoded.customerId) {
+          return `customer_${decoded.customerId}`;
+        }
+      } catch {
+        // Token non valido, fallback su IP
+      }
+    }
+    // Fallback su IP se non c'è customer token
+    return req.ip || 'unknown';
+  },
 });
 
 // Applica rate limiting generale a tutte le API
@@ -1091,7 +1133,7 @@ app.post('/api/customer/check-phone', async (req, res) => {
 });
 
 // Register
-app.post('/api/customer/register', async (req, res) => {
+app.post('/api/customer/register', registrationLimiter, async (req, res) => {
   const { promotionId, firstName, lastName, phoneNumber, consentMarketing, consentTerms } = req.body;
 
   if (!promotionId || !firstName || !lastName || !phoneNumber) {
