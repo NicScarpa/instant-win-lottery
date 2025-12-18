@@ -706,6 +706,128 @@ app.get('/api/admin/used-tokens/:promotionId', authenticateToken, authorizeRole(
   }
 });
 
+// Lista Clienti registrati per una promozione (Archivio Giocatori)
+app.get('/api/admin/customers/:promotionId', authenticateToken, authorizeRole('admin'), async (req, res) => {
+  const { promotionId } = req.params;
+  const { page = 1, limit = 20, search = '' } = req.query;
+  const pid = Number(promotionId);
+  const pageNum = Number(page);
+  const limitNum = Number(limit);
+  const searchStr = String(search).trim();
+
+  try {
+    // Costruisci il filtro where
+    const whereClause: {
+      promotion_id: number;
+      OR?: Array<{
+        first_name?: { contains: string; mode: 'insensitive' };
+        last_name?: { contains: string; mode: 'insensitive' };
+        phone_number?: { contains: string };
+      }>;
+    } = {
+      promotion_id: pid
+    };
+
+    // Aggiungi filtro di ricerca se presente
+    if (searchStr) {
+      whereClause.OR = [
+        { first_name: { contains: searchStr, mode: 'insensitive' } },
+        { last_name: { contains: searchStr, mode: 'insensitive' } },
+        { phone_number: { contains: searchStr } }
+      ];
+    }
+
+    // Query per dati e conteggio in parallelo
+    const [customers, total] = await Promise.all([
+      prisma.customer.findMany({
+        where: whereClause,
+        select: {
+          id: true,
+          first_name: true,
+          last_name: true,
+          phone_number: true,
+          total_plays: true,
+          consent_marketing: true,
+          created_at: true
+        },
+        orderBy: { created_at: 'desc' },
+        take: limitNum,
+        skip: (pageNum - 1) * limitNum
+      }),
+      prisma.customer.count({ where: whereClause })
+    ]);
+
+    // Formatta la risposta
+    const formatted = customers.map(c => ({
+      id: c.id,
+      firstName: c.first_name,
+      lastName: c.last_name,
+      phoneNumber: c.phone_number,
+      totalPlays: c.total_plays,
+      consentMarketing: c.consent_marketing,
+      registeredAt: c.created_at
+    }));
+
+    res.json({
+      customers: formatted,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum)
+    });
+  } catch (err) {
+    console.error('Errore fetch customers:', err);
+    res.status(500).json({ error: 'Errore recupero clienti' });
+  }
+});
+
+// Export CSV di tutti i clienti di una promozione
+app.get('/api/admin/customers/:promotionId/export', authenticateToken, authorizeRole('admin'), async (req, res) => {
+  const { promotionId } = req.params;
+  const pid = Number(promotionId);
+
+  try {
+    const customers = await prisma.customer.findMany({
+      where: { promotion_id: pid },
+      select: {
+        first_name: true,
+        last_name: true,
+        phone_number: true,
+        total_plays: true,
+        consent_marketing: true,
+        created_at: true
+      },
+      orderBy: { created_at: 'desc' }
+    });
+
+    // Genera CSV
+    const headers = ['Nome', 'Cognome', 'Telefono', 'Giocate Totali', 'Consenso Marketing', 'Data Registrazione'];
+    const rows = customers.map(c => [
+      c.first_name,
+      c.last_name,
+      c.phone_number,
+      c.total_plays.toString(),
+      c.consent_marketing ? 'Sì' : 'No',
+      new Date(c.created_at).toLocaleString('it-IT')
+    ]);
+
+    const csvContent = [
+      headers.join(';'),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(';'))
+    ].join('\n');
+
+    // BOM per Excel compatibility con caratteri italiani
+    const bom = '\uFEFF';
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename=archivio_giocatori_promo_${pid}.csv`);
+    res.send(bom + csvContent);
+  } catch (err) {
+    console.error('Errore export customers:', err);
+    res.status(500).json({ error: 'Errore esportazione clienti' });
+  }
+});
+
 // Reset Token - Elimina tutti i token e le giocate di una promozione
 app.delete('/api/admin/tokens/reset/:promotionId', authenticateToken, authorizeRole('admin'), async (req, res) => {
   const { promotionId } = req.params;

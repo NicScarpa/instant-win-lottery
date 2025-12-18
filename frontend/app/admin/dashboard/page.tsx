@@ -10,6 +10,7 @@ import PrizeManager from './components/PrizeManager';
 import PrizeList from './components/PrizeList';
 import PromotionSelector from './components/PromotionSelector';
 import PlayLogViewer from './components/PlayLogViewer';
+import PlayersArchive from './components/PlayersArchive';
 import PrizeOverview from './components/PrizeOverview';
 import Sidebar from './components/Sidebar';
 import AdminLeaderboard from './components/AdminLeaderboard';
@@ -428,10 +429,21 @@ export default function AdminDashboardPage() {
 
                         {/* VIEW: LOG */}
                         {currentView === 'log' && (
-                            <PlayLogViewer
-                                promotionId={currentPromotion.id}
-                                key={`logs-${currentPromotion.id}-${dataRefreshKey}`}
-                            />
+                            <div className="space-y-6">
+                                {/* Archivio Giocatori */}
+                                <PlayersArchive
+                                    promotionId={currentPromotion.id}
+                                    key={`players-${currentPromotion.id}-${dataRefreshKey}`}
+                                />
+
+                                {/* Storico Giocate */}
+                                <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                                    <PlayLogViewer
+                                        promotionId={currentPromotion.id}
+                                        key={`logs-${currentPromotion.id}-${dataRefreshKey}`}
+                                    />
+                                </div>
+                            </div>
                         )}
 
                     </div>
