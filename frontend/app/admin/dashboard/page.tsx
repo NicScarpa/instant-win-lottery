@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import TokenGenerator from './components/TokenGenerator';
 import TokenListTable from './components/TokenListTable';
 import UsedTokensList from './components/UsedTokensList';
+import UsedTokensTable from './components/UsedTokensTable';
 import StatsCard from './components/StatsCard';
 import PrizeManager from './components/PrizeManager';
 import PrizeList from './components/PrizeList';
@@ -386,12 +387,23 @@ export default function AdminDashboardPage() {
                                     />
                                 </div>
 
-                                {/* Lista Token Generati */}
-                                <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
-                                    <TokenListTable
-                                        promotionId={currentPromotion.id}
-                                        key={`table-full-${currentPromotion.id}-${dataRefreshKey}`}
-                                    />
+                                {/* Liste Token - Side by side on desktop */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    {/* Token Disponibili */}
+                                    <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                                        <TokenListTable
+                                            promotionId={currentPromotion.id}
+                                            key={`table-available-${currentPromotion.id}-${dataRefreshKey}`}
+                                        />
+                                    </div>
+
+                                    {/* Token Utilizzati */}
+                                    <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                                        <UsedTokensTable
+                                            promotionId={currentPromotion.id}
+                                            key={`table-used-${currentPromotion.id}-${dataRefreshKey}`}
+                                        />
+                                    </div>
                                 </div>
                             </div>
                         )}

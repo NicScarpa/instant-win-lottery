@@ -12,6 +12,8 @@ interface TokenData {
     used_at?: string | null;
 }
 
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+
 export default function TokenListTable({ promotionId, limit }: { promotionId: string; limit?: number }) {
     const [tokens, setTokens] = useState<TokenData[]>([]);
     const [totalTokens, setTotalTokens] = useState(0);
@@ -20,10 +22,10 @@ export default function TokenListTable({ promotionId, limit }: { promotionId: st
 
     // STATI PER LA PAGINAZIONE
     const [currentPage, setCurrentPage] = useState(1);
-    const itemsPerPage = limit || 10;
+    const [itemsPerPage, setItemsPerPage] = useState(limit || 10);
     const isLimitedView = !!limit;
 
-    const fetchTokens = useCallback(async (page: number) => {
+    const fetchTokens = useCallback(async (page: number, perPage: number) => {
         if (!promotionId) return;
 
         setLoading(true);
@@ -39,7 +41,7 @@ export default function TokenListTable({ promotionId, limit }: { promotionId: st
             // Usa paginazione server-side
             const queryParams = new URLSearchParams({
                 page: page.toString(),
-                limit: itemsPerPage.toString()
+                limit: perPage.toString()
             });
 
             const res = await fetch(getApiUrl(`api/admin/tokens/${promotionId}?${queryParams}`), {
@@ -64,19 +66,19 @@ export default function TokenListTable({ promotionId, limit }: { promotionId: st
         } finally {
             setLoading(false);
         }
-    }, [promotionId, itemsPerPage]);
+    }, [promotionId]);
 
     useEffect(() => {
         setCurrentPage(1);
-        fetchTokens(1);
-    }, [promotionId, fetchTokens]);
+        fetchTokens(1, itemsPerPage);
+    }, [promotionId, itemsPerPage, fetchTokens]);
 
     // Refetch when page changes (only for non-limited view)
     useEffect(() => {
         if (!isLimitedView && currentPage > 1) {
-            fetchTokens(currentPage);
+            fetchTokens(currentPage, itemsPerPage);
         }
-    }, [currentPage, isLimitedView, fetchTokens]);
+    }, [currentPage, isLimitedView, itemsPerPage, fetchTokens]);
 
     // For limited view, just show the tokens we have
     // For pagination view, tokens are already paginated from server
@@ -92,47 +94,69 @@ export default function TokenListTable({ promotionId, limit }: { promotionId: st
         if (currentPage < totalPages) setCurrentPage(prev => prev + 1);
     };
 
+    const handlePageSizeChange = (newSize: number) => {
+        setItemsPerPage(newSize);
+        setCurrentPage(1);
+    };
+
     if (loading) return <div className="text-gray-400 text-xs mt-4 animate-pulse">Caricamento...</div>;
     if (error) return <div className="text-red-500 text-xs mt-4">{error}</div>;
 
     if (totalTokens === 0 && tokens.length === 0) {
-        return <p className="text-gray-400 text-sm italic py-4">Nessun token ancora generato.</p>;
+        return (
+            <div className="w-full py-8 text-center">
+                <div className="text-gray-300 text-4xl mb-2">🎫</div>
+                <p className="text-gray-400 text-sm">Nessun token ancora generato</p>
+                <p className="text-gray-300 text-xs mt-1">Genera token dalla sezione sopra</p>
+            </div>
+        );
     }
 
     return (
-        <div className={isLimitedView ? "w-full" : "mt-8 bg-white p-6 rounded-xl shadow-sm border border-gray-100"}>
-            {!isLimitedView && (
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-bold text-gray-800">
-                        Token Disponibili <span className="text-sm font-normal text-gray-500">({totalTokens} totali)</span>
-                    </h3>
-                    <span className="text-xs text-gray-400">
-                        Pagina {currentPage} di {totalPages || 1}
-                    </span>
-                </div>
-            )}
+        <div className="w-full">
+            {/* Header con titolo e selettore righe */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                <h3 className="text-lg font-bold text-gray-800">
+                    Token Disponibili <span className="text-sm font-normal text-gray-500">({totalTokens} totali)</span>
+                </h3>
+                {!isLimitedView && (
+                    <div className="flex items-center gap-3">
+                        <label className="text-xs text-gray-500">Righe:</label>
+                        <select
+                            value={itemsPerPage}
+                            onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                            className="text-sm border border-gray-200 rounded-lg px-2 py-1 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#E3001B]/20"
+                        >
+                            {PAGE_SIZE_OPTIONS.map(size => (
+                                <option key={size} value={size}>{size}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+            </div>
 
-            <div className={`space-y-3 ${!isLimitedView ? 'mt-4' : ''}`}>
+            {/* Lista Token */}
+            <div className="space-y-2">
                 {displayedTokens.map((token) => (
                     <div key={token.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-white hover:shadow-md transition border border-transparent hover:border-gray-100 group">
-                        <div className="flex items-center gap-4">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg shadow-sm ${token.status === 'available' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
+                        <div className="flex items-center gap-3">
+                            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-base shadow-sm ${token.status === 'available' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'
                                 }`}>
                                 {token.status === 'available' ? '✓' : '✗'}
                             </div>
                             <div>
-                                <div className="font-mono font-bold text-gray-700">{token.token_code}</div>
+                                <div className="font-mono font-bold text-gray-700 text-sm">{token.token_code}</div>
                                 <div className="text-xs text-gray-400">
                                     {token.status === 'available'
                                         ? 'Disponibile'
                                         : token.used_at
-                                            ? `Usato il ${new Date(token.used_at).toLocaleDateString()} alle ${new Date(token.used_at).toLocaleTimeString()}`
-                                            : 'Usato (data n/d)'}
+                                            ? `Usato il ${new Date(token.used_at).toLocaleDateString()}`
+                                            : 'Usato'}
                                 </div>
                             </div>
                         </div>
                         <div className="text-right">
-                            <span className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-full ${token.status === 'available' ? 'bg-green-50 text-green-600 border border-green-100' : 'bg-red-50 text-red-600 border border-red-100'
+                            <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded-full ${token.status === 'available' ? 'bg-green-50 text-green-600 border border-green-100' : 'bg-red-50 text-red-600 border border-red-100'
                                 }`}>
                                 {token.status === 'available' ? 'Attivo' : 'Usato'}
                             </span>
@@ -143,24 +167,28 @@ export default function TokenListTable({ promotionId, limit }: { promotionId: st
 
             {/* Pagination Controls - Only if NOT limited view */}
             {!isLimitedView && totalPages > 1 && (
-                <div className="flex justify-between items-center mt-6 pt-4 border-t border-gray-100">
+                <div className="flex justify-between items-center mt-4 pt-4 border-t border-gray-100">
                     <button
                         onClick={handlePrev}
                         disabled={currentPage === 1}
-                        className={`px-4 py-2 text-sm font-medium rounded-lg transition ${currentPage === 1
+                        className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${currentPage === 1
                                 ? 'text-gray-300 cursor-not-allowed'
-                                : 'text-gray-600 hover:bg-gray-50'
+                                : 'text-gray-600 hover:bg-gray-100'
                             }`}
                     >
                         ← Indietro
                     </button>
 
+                    <span className="text-xs text-gray-400">
+                        Pagina {currentPage} di {totalPages}
+                    </span>
+
                     <button
                         onClick={handleNext}
                         disabled={currentPage === totalPages}
-                        className={`px-4 py-2 text-sm font-medium rounded-lg transition ${currentPage === totalPages
+                        className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${currentPage === totalPages
                                 ? 'text-gray-300 cursor-not-allowed'
-                                : 'text-gray-600 hover:bg-gray-50'
+                                : 'text-gray-600 hover:bg-gray-100'
                             }`}
                     >
                         Avanti →

@@ -633,41 +633,49 @@ app.get('/api/admin/tokens/:promotionId', authenticateToken, authorizeRole('admi
 // Token Utilizzati con dettagli giocata (per sezione "Ultimi Token Utilizzati")
 app.get('/api/admin/used-tokens/:promotionId', authenticateToken, authorizeRole('admin'), async (req, res) => {
   const { promotionId } = req.params;
-  const { limit = 10 } = req.query;
+  const { page = 1, limit = 10 } = req.query;
   const pid = Number(promotionId);
+  const pageNum = Number(page);
+  const limitNum = Number(limit);
 
   try {
-    // Recupera i token utilizzati con tutte le info correlate
-    const usedTokens = await prisma.token.findMany({
-      where: {
-        promotion_id: pid,
-        status: 'used'
-      },
-      include: {
-        play: {
-          include: {
-            customer: {
-              select: {
-                first_name: true,
-                last_name: true,
-                phone_number: true
-              }
-            },
-            prize_assignment: {
-              include: {
-                prize_type: {
-                  select: {
-                    name: true
+    // Query per il conteggio totale e i dati in parallelo
+    const whereClause = {
+      promotion_id: pid,
+      status: 'used'
+    };
+
+    const [usedTokens, total] = await Promise.all([
+      prisma.token.findMany({
+        where: whereClause,
+        include: {
+          play: {
+            include: {
+              customer: {
+                select: {
+                  first_name: true,
+                  last_name: true,
+                  phone_number: true
+                }
+              },
+              prize_assignment: {
+                include: {
+                  prize_type: {
+                    select: {
+                      name: true
+                    }
                   }
                 }
               }
             }
           }
-        }
-      },
-      orderBy: { used_at: 'desc' },
-      take: Number(limit)
-    });
+        },
+        orderBy: { used_at: 'desc' },
+        take: limitNum,
+        skip: (pageNum - 1) * limitNum
+      }),
+      prisma.token.count({ where: whereClause })
+    ]);
 
     // Formatta la risposta per il frontend
     const formatted = usedTokens.map(token => ({
@@ -687,7 +695,10 @@ app.get('/api/admin/used-tokens/:promotionId', authenticateToken, authorizeRole(
 
     res.json({
       tokens: formatted,
-      total: formatted.length
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum)
     });
   } catch (err) {
     console.error('Errore fetch used tokens:', err);

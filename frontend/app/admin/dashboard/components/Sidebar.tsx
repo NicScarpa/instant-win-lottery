@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 
 interface SidebarProps {
     currentView: string;
@@ -10,7 +9,8 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ currentView, onChangeView, onLogout }: SidebarProps) {
-    const [isOpen, setIsOpen] = useState(false);
+    const [isMobileOpen, setIsMobileOpen] = useState(false);
+    const [isCollapsed, setIsCollapsed] = useState(false);
 
     const menuItems = [
         { id: 'dashboard', label: 'Dashboard', icon: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z' },
@@ -23,9 +23,9 @@ export default function Sidebar({ currentView, onChangeView, onLogout }: Sidebar
         <>
             {/* Mobile Header / Toggle */}
             <div className="md:hidden flex justify-between items-center bg-[#1a1a1a] p-4 text-white sticky top-0 z-50 shadow-md">
-                <img src="/camparisoda.png" alt="Campari Soda" className="h-8 w-auto" />
-                <button onClick={() => setIsOpen(!isOpen)} className="p-2">
-                    {isOpen ? (
+                <span className="font-bold text-lg">Admin Panel</span>
+                <button onClick={() => setIsMobileOpen(!isMobileOpen)} className="p-2">
+                    {isMobileOpen ? (
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                     ) : (
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -33,18 +33,68 @@ export default function Sidebar({ currentView, onChangeView, onLogout }: Sidebar
                 </button>
             </div>
 
-            {/* Sidebar Container */}
+            {/* Sidebar Container - Desktop */}
             <div className={`
-        fixed inset-y-0 left-0 transform ${isOpen ? 'translate-x-0' : '-translate-x-full'} 
-        md:relative md:translate-x-0 transition duration-200 ease-in-out
-        w-64 bg-[#1a1a1a] text-white flex flex-col z-40 h-screen overflow-y-auto
-      `}>
-
-                {/* Logo Area */}
-                <div className="p-6 hidden md:block">
-                    <img src="/camparisoda.png" alt="Campari Soda" className="w-32 mx-auto" />
+                hidden md:flex flex-col bg-[#1a1a1a] text-white h-screen overflow-y-auto transition-all duration-300
+                ${isCollapsed ? 'w-16' : 'w-64'}
+            `}>
+                {/* Toggle Button */}
+                <div className="p-4 flex justify-end">
+                    <button
+                        onClick={() => setIsCollapsed(!isCollapsed)}
+                        className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+                        title={isCollapsed ? 'Espandi menu' : 'Comprimi menu'}
+                    >
+                        <svg className={`w-5 h-5 transition-transform ${isCollapsed ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                        </svg>
+                    </button>
                 </div>
 
+                {/* Navigation */}
+                <nav className="flex-1 px-2 py-4 space-y-2">
+                    {menuItems.map((item) => (
+                        <button
+                            key={item.id}
+                            onClick={() => onChangeView(item.id)}
+                            title={isCollapsed ? item.label : undefined}
+                            className={`
+                                w-full flex items-center ${isCollapsed ? 'justify-center' : 'space-x-3'} px-3 py-3 rounded-xl transition-all duration-200 group
+                                ${currentView === item.id
+                                    ? 'bg-[#E3001B] text-white shadow-lg shadow-red-900/20'
+                                    : 'text-gray-400 hover:bg-white/5 hover:text-white'
+                                }
+                            `}
+                        >
+                            <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
+                            </svg>
+                            {!isCollapsed && <span className="font-medium">{item.label}</span>}
+                        </button>
+                    ))}
+                </nav>
+
+                {/* Footer Actions */}
+                <div className="p-2 border-t border-white/10">
+                    <button
+                        onClick={onLogout}
+                        title={isCollapsed ? 'Logout' : undefined}
+                        className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'space-x-3'} px-3 py-3 text-gray-400 hover:text-white hover:bg-white/5 rounded-xl transition-colors`}
+                    >
+                        <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        </svg>
+                        {!isCollapsed && <span>Logout</span>}
+                    </button>
+                </div>
+            </div>
+
+            {/* Mobile Sidebar */}
+            <div className={`
+                fixed inset-y-0 left-0 transform ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
+                md:hidden transition duration-200 ease-in-out
+                w-64 bg-[#1a1a1a] text-white flex flex-col z-40 h-screen overflow-y-auto pt-16
+            `}>
                 {/* Navigation */}
                 <nav className="flex-1 px-4 py-6 space-y-2">
                     {menuItems.map((item) => (
@@ -52,15 +102,15 @@ export default function Sidebar({ currentView, onChangeView, onLogout }: Sidebar
                             key={item.id}
                             onClick={() => {
                                 onChangeView(item.id);
-                                setIsOpen(false);
+                                setIsMobileOpen(false);
                             }}
                             className={`
-                w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 group
-                ${currentView === item.id
+                                w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 group
+                                ${currentView === item.id
                                     ? 'bg-[#E3001B] text-white shadow-lg shadow-red-900/20'
                                     : 'text-gray-400 hover:bg-white/5 hover:text-white'
                                 }
-              `}
+                            `}
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
@@ -85,10 +135,10 @@ export default function Sidebar({ currentView, onChangeView, onLogout }: Sidebar
             </div>
 
             {/* Overlay for mobile */}
-            {isOpen && (
+            {isMobileOpen && (
                 <div
                     className="fixed inset-0 bg-black/50 z-30 md:hidden backdrop-blur-sm"
-                    onClick={() => setIsOpen(false)}
+                    onClick={() => setIsMobileOpen(false)}
                 />
             )}
         </>
