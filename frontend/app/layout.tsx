@@ -3,7 +3,7 @@ import { Josefin_Sans } from "next/font/google";
 import "./globals.css";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { GoogleTagManagerHead, GoogleTagManagerBody } from "./components/GoogleTagManager";
-import { MetaPixelHead, MetaPixelBody } from "./components/MetaPixel";
+import { MetaPixelHead, MetaPixelBody, MetaPixelScript } from "./components/MetaPixel";
 
 const josefin = Josefin_Sans({
   subsets: ["latin"],
@@ -36,6 +36,7 @@ export default function RootLayout({
         suppressHydrationWarning={true}
       >
         <GoogleTagManagerBody />
+        <MetaPixelScript />
         <MetaPixelBody />
         <ErrorBoundary>
           {children}
