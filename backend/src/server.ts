@@ -77,7 +77,9 @@ const CORS_ORIGINS = process.env.CORS_ORIGINS
     'http://localhost:3000',
     'https://new-frontend-camparino-week.up.railway.app',
     'https://campari-lottery-git-main-nicola-scarpas-projects.vercel.app',
-    'https://campari-lottery.vercel.app'
+    'https://campari-lottery.vercel.app',
+    'https://www.camparinoweek.com',
+    'https://camparinoweek.com'
   ];
 
 app.use(cors({
