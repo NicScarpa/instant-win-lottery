@@ -417,8 +417,7 @@ function PlayContent() {
                             <div className="bg-black text-white border-4 border-white p-8 text-center shadow-[8px_8px_0px_0px_rgba(255,255,255,0.2)] mb-8">
                                 <h2 className="text-4xl font-bold uppercase tracking-tighter mb-4 text-[#E3001B]">NON HAI VINTO</h2>
                                 <p className="font-bold text-lg mb-6 leading-relaxed uppercase">
-                                    Niente gadget questa volta.<br />
-                                    Ma un Campari Soda<br />è sempre una vittoria.
+                                    La fortuna era distratta, ma un Camparino è sempre una vittoria.
                                 </p>
                                 <p className="text-sm font-light tracking-wide">
                                     Ritenta con il prossimo Camparino 😜

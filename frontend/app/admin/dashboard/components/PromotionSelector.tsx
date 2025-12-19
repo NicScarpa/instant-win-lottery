@@ -27,6 +27,18 @@ export default function PromotionSelector({
     const [name, setName] = useState(currentPromotion.name);
     const [plannedTokenCount, setPlannedTokenCount] = useState(currentPromotion.planned_token_count);
     const [status, setStatus] = useState(currentPromotion.status);
+    const [startDatetime, setStartDatetime] = useState(() => {
+        if (currentPromotion.start_datetime) {
+            return new Date(currentPromotion.start_datetime).toISOString().slice(0, 16);
+        }
+        return '';
+    });
+    const [endDatetime, setEndDatetime] = useState(() => {
+        if (currentPromotion.end_datetime) {
+            return new Date(currentPromotion.end_datetime).toISOString().slice(0, 16);
+        }
+        return '';
+    });
     const [successMessage, setSuccessMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
     const [isEditing, setIsEditing] = useState(false);
@@ -46,8 +58,14 @@ export default function PromotionSelector({
         setName(currentPromotion.name);
         setPlannedTokenCount(currentPromotion.planned_token_count);
         setStatus(currentPromotion.status);
-        setIsEditing(false); 
-        setIsCreating(false); 
+        if (currentPromotion.start_datetime) {
+            setStartDatetime(new Date(currentPromotion.start_datetime).toISOString().slice(0, 16));
+        }
+        if (currentPromotion.end_datetime) {
+            setEndDatetime(new Date(currentPromotion.end_datetime).toISOString().slice(0, 16));
+        }
+        setIsEditing(false);
+        setIsCreating(false);
         setSuccessMessage('');
         setErrorMessage('');
     }, [currentPromotion]);
@@ -110,6 +128,10 @@ export default function PromotionSelector({
                 return;
             }
 
+            // Converti datetime-local in ISO string per il backend
+            const startISO = startDatetime ? new Date(startDatetime).toISOString() : null;
+            const endISO = endDatetime ? new Date(endDatetime).toISOString() : null;
+
             const res = await fetch(getApiUrl(`api/promotions/update/${currentPromotion.id}`), {
                 method: 'PUT',
                 headers: {
@@ -121,8 +143,8 @@ export default function PromotionSelector({
                     name,
                     plannedTokenCount: parseInt(plannedTokenCount.toString()),
                     status,
-                    start_datetime: currentPromotion.start_datetime,
-                    end_datetime: currentPromotion.end_datetime,
+                    start_datetime: startISO,
+                    end_datetime: endISO,
                 }),
             });
             const data = await res.json();
@@ -289,6 +311,28 @@ export default function PromotionSelector({
                                 <option value="DRAFT">DRAFT</option>
                                 <option value="CLOSED">CLOSED</option>
                             </select>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Data e Ora Inizio</label>
+                            <input
+                                type="datetime-local"
+                                value={startDatetime}
+                                onChange={(e) => setStartDatetime(e.target.value)}
+                                className="w-full border rounded-lg p-2.5 text-black text-sm"
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Data e Ora Fine</label>
+                            <input
+                                type="datetime-local"
+                                value={endDatetime}
+                                onChange={(e) => setEndDatetime(e.target.value)}
+                                className="w-full border rounded-lg p-2.5 text-black text-sm"
+                                required
+                            />
                         </div>
                     </div>
                     <button type="submit" className="w-full bg-amber-600 text-white font-bold py-3 rounded-lg hover:bg-amber-700 transition">Salva Modifiche</button>
