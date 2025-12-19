@@ -13,7 +13,11 @@ import {
     trackRegistration,
     trackInitiatePlay,
     trackGameResult,
-    trackError
+    trackError,
+    trackPhoneValidated,
+    trackMarketingOptIn,
+    trackLeaderboardViewed,
+    trackReturningUserLogin
 } from '../lib/tracking';
 
 // --- COSTANTI DI STILE CAMPARI ---
@@ -75,6 +79,9 @@ function PlayContent() {
     const [modalOpen, setModalOpen] = useState(false);
     const [modalContent, setModalContent] = useState({ title: '', text: '' });
 
+    // Tracking anti-duplicazione
+    const [hasTrackedLeaderboard, setHasTrackedLeaderboard] = useState(false);
+
     // --- LOGICHE ---
 
     // Funzione per verificare se il telefono è già registrato
@@ -105,6 +112,12 @@ function PlayContent() {
                 setLastName('');
             }
             setGameState('NAME_INPUT');
+
+            // TRACKING: PhoneValidated - distingue nuovo utente vs esistente
+            trackPhoneValidated({
+                isNewUser: !data.exists,
+                promotionId
+            });
         } catch (err) {
             console.error('Errore check-phone:', err);
             alert('Errore di connessione. Riprova.');
@@ -141,6 +154,22 @@ function PlayContent() {
                     acceptedMarketing: marketing
                 });
 
+                // TRACKING: MarketingOptIn - solo se l'utente ha accettato il marketing
+                if (marketing) {
+                    trackMarketingOptIn({
+                        promotionId: promoId,
+                        customerId: data.customerId
+                    });
+                }
+
+                // TRACKING: ReturningUserLogin - solo se è un utente che ritorna
+                if (existingUser) {
+                    trackReturningUserLogin({
+                        promotionId: promoId,
+                        customerName: `${fName} ${lName}`
+                    });
+                }
+
                 setGameState('READY');
                 if (saveLocal) {
                     localStorage.setItem('campari_user', JSON.stringify({ firstName: fName, lastName: lName, phone: ph }));
@@ -149,7 +178,7 @@ function PlayContent() {
                 alert('Errore registrazione: ' + (data.error || 'Dati non validi'));
             }
         } catch (err) { alert('Errore di connessione.'); }
-    }, []);
+    }, [existingUser]);
 
     useEffect(() => {
         let mounted = true;
@@ -207,6 +236,18 @@ function PlayContent() {
 
         return () => { mounted = false; };
     }, [token]);
+
+    // TRACKING: LeaderboardViewed quando l'utente vede la classifica nei risultati
+    useEffect(() => {
+        if (gameState === 'RESULT' && !hasTrackedLeaderboard && promotionId) {
+            trackLeaderboardViewed({
+                promotionId,
+                customerId,
+                isWinner: !!prize
+            });
+            setHasTrackedLeaderboard(true);
+        }
+    }, [gameState, hasTrackedLeaderboard, promotionId, customerId, prize]);
 
     const handleRegistrationSubmit = (e: React.FormEvent) => {
         e.preventDefault();

@@ -1,12 +1,20 @@
 /**
  * Utility per il tracking degli eventi Meta Pixel e Google Analytics
  *
- * Eventi tracciati:
+ * Eventi Standard tracciati:
  * - ViewContent: Quando l'utente vede la pagina di gioco
  * - Lead: Quando un nuovo utente completa la registrazione
  * - CompleteRegistration: Alias di Lead per compatibilità
  * - InitiateCheckout: Quando l'utente clicca "GIOCA ORA"
  * - Purchase: Quando l'utente vince un premio
+ *
+ * Eventi Custom tracciati:
+ * - PhoneValidated: Quando il telefono viene validato (nuovo/esistente)
+ * - MarketingOptIn: Quando l'utente accetta il consenso marketing
+ * - LeaderboardViewed: Quando l'utente visualizza la classifica
+ * - ReturningUserLogin: Quando un utente già registrato torna a giocare
+ * - GameLoss: Quando l'utente non vince
+ * - GameError: Quando si verifica un errore nel flusso
  */
 
 // Tipizzazione per fbq (Facebook Pixel)
@@ -188,5 +196,95 @@ export function trackError(errorType: string, errorMessage?: string) {
   trackGTMEvent('game_error', {
     error_type: errorType,
     error_message: errorMessage,
+  });
+}
+
+// ============================================
+// EVENTI CUSTOM AVANZATI PER FUNNEL ANALYSIS
+// ============================================
+
+/**
+ * Traccia quando il numero di telefono viene validato dal backend
+ * Distingue tra utente nuovo e utente già registrato
+ */
+export function trackPhoneValidated(data: {
+  isNewUser: boolean;
+  promotionId?: string | number;
+}) {
+  trackMetaCustomEvent('PhoneValidated', {
+    content_name: 'Phone Validation',
+    content_category: data.isNewUser ? 'New User' : 'Returning User',
+    user_type: data.isNewUser ? 'new' : 'returning',
+    value: data.isNewUser ? 1 : 0.8,
+    currency: 'EUR',
+  });
+
+  trackGTMEvent('phone_validated', {
+    is_new_user: data.isNewUser,
+    promotion_id: data.promotionId,
+  });
+}
+
+/**
+ * Traccia quando l'utente accetta il consenso marketing
+ * Evento di alto valore per segmentazione audience
+ */
+export function trackMarketingOptIn(data: {
+  promotionId?: string | number;
+  customerId?: string | number;
+}) {
+  trackMetaCustomEvent('MarketingOptIn', {
+    content_name: 'Marketing Consent',
+    content_category: 'Lead Quality',
+    value: 2, // Alto valore: utente disposto a ricevere comunicazioni
+    currency: 'EUR',
+  });
+
+  trackGTMEvent('marketing_opt_in', {
+    promotion_id: data.promotionId,
+    customer_id: data.customerId,
+  });
+}
+
+/**
+ * Traccia quando l'utente visualizza la classifica nella pagina risultati
+ * Utile per misurare engagement post-gioco
+ */
+export function trackLeaderboardViewed(data: {
+  promotionId?: string | number;
+  customerId?: string | number;
+  isWinner: boolean;
+}) {
+  trackMetaCustomEvent('LeaderboardViewed', {
+    content_name: 'Leaderboard View',
+    content_category: data.isWinner ? 'Winner' : 'Non-Winner',
+    game_result: data.isWinner ? 'win' : 'loss',
+  });
+
+  trackGTMEvent('leaderboard_viewed', {
+    promotion_id: data.promotionId,
+    customer_id: data.customerId,
+    is_winner: data.isWinner,
+  });
+}
+
+/**
+ * Traccia specificamente quando un utente già registrato torna a giocare
+ * Indica retention e engagement della promozione
+ */
+export function trackReturningUserLogin(data: {
+  promotionId?: string | number;
+  customerName?: string;
+}) {
+  trackMetaCustomEvent('ReturningUserLogin', {
+    content_name: 'Returning User',
+    content_category: 'Retention',
+    value: 1.5, // Valore medio-alto: indica retention
+    currency: 'EUR',
+  });
+
+  trackGTMEvent('returning_user_login', {
+    promotion_id: data.promotionId,
+    customer_name: data.customerName,
   });
 }
