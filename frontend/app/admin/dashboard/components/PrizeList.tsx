@@ -8,6 +8,7 @@ interface Prize {
     name: string;
     initial_stock: number;
     remaining_stock: number;
+    gender_restriction: string | null;
 }
 
 interface Props {
@@ -26,6 +27,7 @@ export default function PrizeList({ promotionId, onPrizeChange, refreshKey }: Pr
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editInitialStock, setEditInitialStock] = useState(0);
     const [editRemainingStock, setEditRemainingStock] = useState(0);
+    const [editGenderRestriction, setEditGenderRestriction] = useState<string>('');
 
     const fetchPrizes = useCallback(async () => {
         if (!promotionId) return;
@@ -74,6 +76,7 @@ export default function PrizeList({ promotionId, onPrizeChange, refreshKey }: Pr
         setEditingId(prize.id);
         setEditInitialStock(prize.initial_stock);
         setEditRemainingStock(prize.remaining_stock);
+        setEditGenderRestriction(prize.gender_restriction || '');
         clearMessages();
     };
 
@@ -102,7 +105,8 @@ export default function PrizeList({ promotionId, onPrizeChange, refreshKey }: Pr
                 credentials: 'include',
                 body: JSON.stringify({
                     initial_stock: editInitialStock,
-                    remaining_stock: editRemainingStock
+                    remaining_stock: editRemainingStock,
+                    gender_restriction: editGenderRestriction || null
                 })
             });
 
@@ -263,6 +267,18 @@ export default function PrizeList({ promotionId, onPrizeChange, refreshKey }: Pr
                                             />
                                         </div>
                                     </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-500 mb-1">Restrizione Genere</label>
+                                        <select
+                                            value={editGenderRestriction}
+                                            onChange={(e) => setEditGenderRestriction(e.target.value)}
+                                            className="w-full border border-gray-300 rounded p-2 text-sm text-black"
+                                        >
+                                            <option value="">Tutti</option>
+                                            <option value="F">Solo Donne</option>
+                                            <option value="M">Solo Uomini</option>
+                                        </select>
+                                    </div>
                                     <div className="flex gap-2">
                                         <button
                                             onClick={() => saveEdit(prize.id)}
@@ -282,7 +298,19 @@ export default function PrizeList({ promotionId, onPrizeChange, refreshKey }: Pr
                                 // Modalità visualizzazione
                                 <div className="flex items-center justify-between">
                                     <div className="flex-1">
-                                        <div className="font-medium text-gray-800">{prize.name}</div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-medium text-gray-800">{prize.name}</span>
+                                            {prize.gender_restriction === 'F' && (
+                                                <span className="px-2 py-0.5 text-xs font-medium bg-pink-100 text-pink-700 rounded-full">
+                                                    Solo Donne
+                                                </span>
+                                            )}
+                                            {prize.gender_restriction === 'M' && (
+                                                <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-full">
+                                                    Solo Uomini
+                                                </span>
+                                            )}
+                                        </div>
                                         <div className="text-sm text-gray-500">
                                             Stock: <span className="font-semibold">{prize.remaining_stock}</span> / {prize.initial_stock}
                                         </div>

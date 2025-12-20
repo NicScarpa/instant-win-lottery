@@ -11,8 +11,9 @@ interface Props {
 }
 
 export default function PrizeManager({ promotionId, promotionName, onPrizeChange }: Props) {
-    const [name, setName] = useState(''); 
-    const [initialStock, setInitialStock] = useState(1); 
+    const [name, setName] = useState('');
+    const [initialStock, setInitialStock] = useState(1);
+    const [genderRestriction, setGenderRestriction] = useState<string>('');
     const [successMessage, setSuccessMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
     
@@ -53,7 +54,8 @@ export default function PrizeManager({ promotionId, promotionName, onPrizeChange
                 body: JSON.stringify({
                     promotionId: promotionId,
                     name: name,
-                    initialStock: initialStock
+                    initialStock: initialStock,
+                    genderRestriction: genderRestriction || null
                 }),
             });
 
@@ -61,9 +63,10 @@ export default function PrizeManager({ promotionId, promotionName, onPrizeChange
 
             if (res.ok) {
                 setSuccessMessage(`Premio "${data.prize.name}" creato con stock iniziale di ${data.prize.initial_stock}.`);
-                setName(''); 
+                setName('');
                 setInitialStock(1);
-                
+                setGenderRestriction('');
+
                 // Chiama la funzione di refresh del genitore
                 onPrizeChange();
                 
@@ -124,6 +127,25 @@ export default function PrizeManager({ promotionId, promotionName, onPrizeChange
                         />
                         <span className="text-gray-500 text-sm">pz.</span>
                     </div>
+                </div>
+
+                <div>
+                    <label htmlFor="genderRestriction" className="block text-sm font-medium text-gray-700">
+                        Restrizione Genere
+                    </label>
+                    <select
+                        id="genderRestriction"
+                        value={genderRestriction}
+                        onChange={(e) => setGenderRestriction(e.target.value)}
+                        className="mt-1 block w-full border border-gray-300 rounded-md p-2 text-black focus:ring-blue-500 focus:border-blue-500"
+                    >
+                        <option value="">Tutti</option>
+                        <option value="F">Solo Donne</option>
+                        <option value="M">Solo Uomini</option>
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                        Se impostato, il premio sarà assegnabile solo al genere selezionato
+                    </p>
                 </div>
 
                 <button

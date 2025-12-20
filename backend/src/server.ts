@@ -412,10 +412,16 @@ app.get('/api/admin/prizes/:promotionId', authenticateToken, authorizeRole('admi
 
 // Aggiungi singolo premio
 app.post('/api/admin/prizes/add', authenticateToken, authorizeRole('admin'), async (req, res) => {
-  const { promotionId, name, initialStock } = req.body;
+  const { promotionId, name, initialStock, genderRestriction } = req.body;
 
   if (!promotionId || !name || !initialStock) {
     return res.status(400).json({ error: 'Campi mancanti: promotionId, name, initialStock sono obbligatori' });
+  }
+
+  // Valida genderRestriction se fornito
+  const validGenderValues = ['F', 'M', null, '', undefined];
+  if (genderRestriction && !['F', 'M'].includes(genderRestriction)) {
+    return res.status(400).json({ error: 'genderRestriction deve essere "F", "M" o vuoto' });
   }
 
   try {
@@ -425,7 +431,8 @@ app.post('/api/admin/prizes/add', authenticateToken, authorizeRole('admin'), asy
         name: name.trim(),
         initial_stock: Number(initialStock),
         remaining_stock: Number(initialStock),
-        target_overall_probability: 0
+        target_overall_probability: 0,
+        gender_restriction: genderRestriction || null
       }
     });
 
@@ -472,7 +479,7 @@ app.post('/api/admin/prizes/update', authenticateToken, authorizeRole('admin'), 
 // Modifica stock di un singolo premio
 app.put('/api/admin/prizes/:prizeId', authenticateToken, authorizeRole('admin'), async (req, res) => {
   const { prizeId } = req.params;
-  const { initial_stock, remaining_stock } = req.body;
+  const { initial_stock, remaining_stock, gender_restriction } = req.body;
 
   try {
     const prize = await prisma.prizeType.findUnique({
@@ -483,13 +490,22 @@ app.put('/api/admin/prizes/:prizeId', authenticateToken, authorizeRole('admin'),
       return res.status(404).json({ error: 'Premio non trovato' });
     }
 
-    const updateData: { initial_stock?: number; remaining_stock?: number } = {};
+    // Valida gender_restriction se fornito
+    if (gender_restriction !== undefined && gender_restriction !== null && gender_restriction !== '' && !['F', 'M'].includes(gender_restriction)) {
+      return res.status(400).json({ error: 'gender_restriction deve essere "F", "M" o vuoto' });
+    }
+
+    const updateData: { initial_stock?: number; remaining_stock?: number; gender_restriction?: string | null } = {};
 
     if (initial_stock !== undefined) {
       updateData.initial_stock = Number(initial_stock);
     }
     if (remaining_stock !== undefined) {
       updateData.remaining_stock = Number(remaining_stock);
+    }
+    if (gender_restriction !== undefined) {
+      // Se e' stringa vuota o null, imposta null
+      updateData.gender_restriction = gender_restriction === '' ? null : gender_restriction;
     }
 
     const updated = await prisma.prizeType.update({
