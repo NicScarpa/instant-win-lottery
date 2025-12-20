@@ -27,6 +27,7 @@ export default function UsedTokensTable({ promotionId, limit }: { promotionId: s
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [expandedId, setExpandedId] = useState<number | null>(null);
+    const [redeemingCode, setRedeemingCode] = useState<string | null>(null);
 
     // STATI PER LA PAGINAZIONE
     const [currentPage, setCurrentPage] = useState(1);
@@ -104,6 +105,42 @@ export default function UsedTokensTable({ promotionId, limit }: { promotionId: s
 
     const toggleExpand = (id: number) => {
         setExpandedId(expandedId === id ? null : id);
+    };
+
+    const markAsRedeemed = async (prizeCode: string) => {
+        if (!confirm('Confermi di voler segnare questo premio come riscosso?')) return;
+
+        setRedeemingCode(prizeCode);
+        try {
+            const token = localStorage.getItem('admin_token');
+            if (!token) {
+                setError('Token non trovato');
+                return;
+            }
+
+            const res = await fetch(getApiUrl('api/admin/mark-redeemed'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                credentials: 'include',
+                body: JSON.stringify({ prizeCode })
+            });
+
+            if (res.ok) {
+                // Aggiorna la lista
+                fetchUsedTokens(currentPage, itemsPerPage);
+            } else {
+                const errData = await res.json();
+                alert(errData.error || 'Errore durante il riscatto');
+            }
+        } catch (err) {
+            console.error(err);
+            alert('Errore di connessione');
+        } finally {
+            setRedeemingCode(null);
+        }
     };
 
     const formatDateTime = (dateStr: string) => {
@@ -216,15 +253,29 @@ export default function UsedTokensTable({ promotionId, limit }: { promotionId: s
                                                 <p className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">Premio Vinto</p>
                                                 <p className="text-sm font-semibold text-green-600">{token.prize_name}</p>
                                             </div>
-                                            <div className="text-right">
+                                            <div className="text-right flex flex-col gap-2 items-end">
                                                 {token.redeemed_at ? (
                                                     <span className="px-2 py-1 text-[10px] font-bold uppercase rounded-full bg-green-100 text-green-700 border border-green-200">
                                                         Riscosso
                                                     </span>
                                                 ) : (
-                                                    <span className="px-2 py-1 text-[10px] font-bold uppercase rounded-full bg-yellow-100 text-yellow-700 border border-yellow-200">
-                                                        Da ritirare
-                                                    </span>
+                                                    <>
+                                                        <span className="px-2 py-1 text-[10px] font-bold uppercase rounded-full bg-yellow-100 text-yellow-700 border border-yellow-200">
+                                                            Da ritirare
+                                                        </span>
+                                                        {token.prize_code && (
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    markAsRedeemed(token.prize_code!);
+                                                                }}
+                                                                disabled={redeemingCode === token.prize_code}
+                                                                className="px-3 py-1.5 text-xs font-bold uppercase rounded-lg bg-green-600 text-white hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            >
+                                                                {redeemingCode === token.prize_code ? 'Attendere...' : 'Segna Riscosso'}
+                                                            </button>
+                                                        )}
+                                                    </>
                                                 )}
                                             </div>
                                         </div>

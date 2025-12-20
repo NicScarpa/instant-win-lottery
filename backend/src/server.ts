@@ -255,6 +255,7 @@ app.post('/api/promotions/create', authenticateToken, authorizeRole('admin'), as
   }
 
   try {
+    // Crea la promozione
     const promo = await prisma.promotion.create({
       data: {
         name,
@@ -264,7 +265,30 @@ app.post('/api/promotions/create', authenticateToken, authorizeRole('admin'), as
         status: 'DRAFT'
       }
     });
-    res.json({ success: true, promotion: promo });
+
+    // Genera automaticamente i token
+    const tokenCount = Number(plannedTokenCount);
+    if (tokenCount > 0) {
+      const codesToCreate = [];
+      for (let i = 0; i < tokenCount; i++) {
+        const code = crypto.randomBytes(4).toString('hex').toUpperCase();
+        codesToCreate.push({
+          promotion_id: promo.id,
+          token_code: code,
+          status: 'available'
+        });
+      }
+
+      await prisma.token.createMany({
+        data: codesToCreate as any
+      });
+    }
+
+    res.json({
+      success: true,
+      promotion: promo,
+      tokensGenerated: tokenCount
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore creazione promozione' });
@@ -600,9 +624,10 @@ app.get('/api/admin/tokens/:promotionId', authenticateToken, authorizeRole('admi
   const searchStr = String(search);
 
   try {
-    // Definisci il filtro where una volta sola
+    // Definisci il filtro where - SOLO token disponibili (non usati)
     const whereClause = {
       promotion_id: pid,
+      status: 'available', // Fix: mostra solo token disponibili
       ...(searchStr && { token_code: { contains: searchStr } })
     };
 
@@ -1653,6 +1678,54 @@ app.post('/api/staff/redeem', authenticateToken, async (req: AuthRequest, res) =
       });
     }
     console.error('Errore redeem:', err);
+    res.status(500).json({ error: 'Errore durante il riscatto' });
+  }
+});
+
+// Admin: Segna premio come riscosso
+app.post('/api/admin/mark-redeemed', authenticateToken, authorizeRole('admin'), async (req: AuthRequest, res) => {
+  const { prizeCode } = req.body;
+  const adminId = req.user?.id;
+
+  if (!prizeCode) return res.status(400).json({ error: 'Codice premio mancante' });
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const assignment = await tx.prizeAssignment.findUnique({
+        where: { prize_code: prizeCode },
+        include: { prize_type: true, customer: true }
+      });
+
+      if (!assignment) {
+        throw { code: 'NOT_FOUND', message: 'Codice premio non trovato' };
+      }
+
+      if (assignment.redeemed_at) {
+        throw { code: 'ALREADY_REDEEMED', message: 'Premio già riscosso' };
+      }
+
+      const updated = await tx.prizeAssignment.update({
+        where: { id: assignment.id },
+        data: {
+          redeemed_at: new Date(),
+          redeemed_by_staff_id: adminId
+        },
+        include: { prize_type: true, customer: true }
+      });
+
+      return {
+        success: true,
+        prizeType: updated.prize_type.name,
+        customer: `${updated.customer.first_name} ${updated.customer.last_name}`,
+        redeemedAt: updated.redeemed_at
+      };
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    if (err.code === 'NOT_FOUND') return res.status(404).json({ error: err.message });
+    if (err.code === 'ALREADY_REDEEMED') return res.status(400).json({ error: err.message });
+    console.error('Errore mark-redeemed:', err);
     res.status(500).json({ error: 'Errore durante il riscatto' });
   }
 });
