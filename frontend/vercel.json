@@ -1,0 +1,26 @@
+{
+  "redirects": [
+    {
+      "source": "/play",
+      "destination": "https://www.camparinoweek.com/play",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "campari-lottery-git-main-nicola-scarpas-projects.vercel.app"
+        }
+      ]
+    },
+    {
+      "source": "/:path*",
+      "destination": "https://www.camparinoweek.com/:path*",
+      "permanent": true,
+      "has": [
+        {
+          "type": "host",
+          "value": "campari-lottery-git-main-nicola-scarpas-projects.vercel.app"
+        }
+      ]
+    }
+  ]
+}
