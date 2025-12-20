@@ -1,11 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Scanner } from '@yudiel/react-qr-scanner';
 import { getApiUrl } from '../lib/api'; // <--- MODIFICA: Import getApiUrl
 
 // RIMOZIONE: Rimosso API_URL locale, usiamo solo getApiUrl
+
+// Intervallo refresh token (ogni 30 minuti)
+const TOKEN_REFRESH_INTERVAL = 30 * 60 * 1000;
 
 type ScanStatus = 'IDLE' | 'SCANNING' | 'PROCESSING' | 'SUCCESS' | 'ERROR' | 'WARNING';
 
@@ -22,8 +25,38 @@ export default function StaffPage() {
     const [resultMessage, setResultMessage] = useState('');
     const [resultDetails, setResultDetails] = useState<ScanResult | null>(null);
     const [manualCode, setManualCode] = useState('');
+    const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-    // 1. Check Sessione (Staff/Admin)
+    // Funzione per fare refresh del token
+    const refreshToken = useCallback(async (): Promise<boolean> => {
+        const token = localStorage.getItem('admin_token');
+        if (!token) return false;
+
+        try {
+            const res = await fetch(getApiUrl('api/auth/refresh'), {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                credentials: 'include'
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                if (data.token) {
+                    localStorage.setItem('admin_token', data.token);
+                    console.log('[Auth] Token refreshed successfully');
+                    return true;
+                }
+            }
+            return false;
+        } catch (err) {
+            console.error('[Auth] Token refresh failed:', err);
+            return false;
+        }
+    }, []);
+
+    // 1. Check Sessione (Staff/Admin) + Setup Token Refresh
     useEffect(() => {
         const checkSession = async () => {
             const token = localStorage.getItem('admin_token');
@@ -42,8 +75,12 @@ export default function StaffPage() {
                 });
 
                 if (!res.ok) {
-                    localStorage.removeItem('admin_token');
-                    router.push('/admin/login');
+                    // Prova a fare refresh del token
+                    const refreshed = await refreshToken();
+                    if (!refreshed) {
+                        localStorage.removeItem('admin_token');
+                        router.push('/admin/login');
+                    }
                 }
             } catch (err) {
                 console.error("Connection error during session check:", err);
@@ -52,7 +89,19 @@ export default function StaffPage() {
         };
 
         checkSession();
-    }, [router]);
+
+        // Setup refresh periodico del token (ogni 30 minuti)
+        refreshIntervalRef.current = setInterval(() => {
+            refreshToken();
+        }, TOKEN_REFRESH_INTERVAL);
+
+        // Cleanup on unmount
+        return () => {
+            if (refreshIntervalRef.current) {
+                clearInterval(refreshIntervalRef.current);
+            }
+        };
+    }, [router, refreshToken]);
 
     // 2. Gestione Scansione QR
     const handleScan = async (rawResult: unknown) => {
@@ -75,12 +124,12 @@ export default function StaffPage() {
     };
 
     // 4. Logica di Riscatto (Chiamata Backend)
-    const processCode = async (code: string) => {
+    const processCode = async (code: string, isRetry = false) => {
         setStatus('PROCESSING');
         setResultMessage('');
         setResultDetails(null);
 
-        const token = localStorage.getItem('admin_token');
+        let token = localStorage.getItem('admin_token');
         if (!token) {
             setStatus('ERROR');
             setResultMessage('Sessione scaduta. Effettua nuovamente il login.');
@@ -92,11 +141,28 @@ export default function StaffPage() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}` // FIX: Aggiunto Authorization header
+                    'Authorization': `Bearer ${token}`
                 },
                 credentials: 'include',
                 body: JSON.stringify({ prizeCode: code })
             });
+
+            // Se token scaduto (403), prova a fare refresh e riprova
+            if (res.status === 403 && !isRetry) {
+                console.log('[Auth] Token expired, attempting refresh...');
+                const refreshed = await refreshToken();
+                if (refreshed) {
+                    // Riprova con il nuovo token
+                    return processCode(code, true);
+                } else {
+                    // Refresh fallito, redirect a login
+                    localStorage.removeItem('admin_token');
+                    setStatus('ERROR');
+                    setResultMessage('Sessione scaduta. Effettua nuovamente il login.');
+                    setTimeout(() => router.push('/admin/login'), 2000);
+                    return;
+                }
+            }
 
             const data = await res.json();
 

@@ -94,3 +94,53 @@ export const authorizeRole = (role: string) => {
     next();
   };
 };
+
+// ------------------------------------------------------------------
+// Middleware per il refresh del token (permette token scaduti entro grace period)
+// ------------------------------------------------------------------
+const REFRESH_GRACE_PERIOD = 7 * 24 * 60 * 60; // 7 giorni in secondi
+
+export const authenticateTokenForRefresh = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  const token = req.cookies?.token || req.headers['authorization']?.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Access denied: Token not found' });
+  }
+
+  try {
+    // Prima prova a verificare normalmente
+    const verified = jwt.verify(token, JWT_SECRET) as UserPayload;
+    req.user = verified;
+    next();
+  } catch (err: any) {
+    // Se il token è scaduto, verifica se è dentro il grace period
+    if (err.name === 'TokenExpiredError') {
+      try {
+        // Decodifica il token senza verificare la scadenza
+        const decoded = jwt.decode(token) as UserPayload & { exp?: number };
+
+        if (decoded && decoded.exp) {
+          const now = Math.floor(Date.now() / 1000);
+          const expiredAt = decoded.exp;
+          const secondsSinceExpiry = now - expiredAt;
+
+          // Se scaduto da meno del grace period, permetti il refresh
+          if (secondsSinceExpiry <= REFRESH_GRACE_PERIOD) {
+            req.user = decoded;
+            return next();
+          }
+        }
+
+        return res.status(403).json({ error: 'Token expired beyond grace period' });
+      } catch {
+        return res.status(403).json({ error: 'Invalid token' });
+      }
+    }
+
+    res.status(403).json({ error: 'Invalid or expired token' });
+  }
+};

@@ -7,7 +7,7 @@ import { ProbabilityEngine } from './services/ProbabilityEngine';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import cookieParser from 'cookie-parser';
-import { authenticateToken, authorizeRole, authenticateCustomer, AuthRequest } from './middlewares/authMiddleware';
+import { authenticateToken, authorizeRole, authenticateCustomer, authenticateTokenForRefresh, AuthRequest } from './middlewares/authMiddleware';
 import QRCode from 'qrcode';
 import PDFDocument from 'pdfkit';
 
@@ -215,6 +215,33 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/auth/me', authenticateToken, (req: any, res: any) => {
   res.json({ user: req.user });
+});
+
+// Refresh Token - rinnova il JWT (permette refresh anche se scaduto da poco)
+app.post('/api/auth/refresh', authenticateTokenForRefresh, (req: AuthRequest, res) => {
+  try {
+    // Se siamo qui, il token è ancora valido (verificato dal middleware)
+    // Generiamo un nuovo token con scadenza estesa
+    const user = req.user!;
+
+    const newToken = jwt.sign(
+      { id: user.id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+
+    res.cookie('token', newToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      maxAge: 8 * 3600 * 1000
+    });
+
+    res.json({ success: true, token: newToken });
+  } catch (err) {
+    console.error('Errore refresh token:', err);
+    res.status(500).json({ error: 'Errore durante il refresh del token' });
+  }
 });
 
 // ==========================================
