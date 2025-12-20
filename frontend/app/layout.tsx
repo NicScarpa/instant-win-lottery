@@ -24,7 +24,7 @@ export const metadata: Metadata = {
   },
   manifest: "/favicon/site.webmanifest",
   appleWebApp: {
-    title: "Campari Soda",
+    title: "Camparino Week",
   },
   other: {
     "facebook-domain-verification": "5fmwtd3fsaydzwmodnrm8avc3cc6wy",
