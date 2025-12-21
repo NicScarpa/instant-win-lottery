@@ -1630,7 +1630,7 @@ app.post('/api/customer/play', playLimiter, authenticateCustomer, async (req: Au
         where: { promotion_id: promotionId }
       });
 
-      // Prepara input per il nuovo engine v2.0
+      // Prepara input per il nuovo engine v2.1 (con time pressure)
       const engineInput = {
         totalTokens,
         usedTokens,
@@ -1647,10 +1647,13 @@ app.post('/api/customer/play', playLimiter, authenticateCustomer, async (req: Au
           totalWins: customerStats.total_wins,
           detectedGender: customerStats.detected_gender
         },
-        prizesAssignedTotal
+        prizesAssignedTotal,
+        // Time pressure: passa le date della promozione
+        promotionStartTime: token.promotion.start_datetime,
+        promotionEndTime: token.promotion.end_datetime
       };
 
-      // Esegui estrazione con engine v2.0
+      // Esegui estrazione con engine v2.1
       const outcome = probabilityEngine.determineOutcome(engineInput);
       const wonPrizeType = outcome.winner ? outcome.prize : null;
 

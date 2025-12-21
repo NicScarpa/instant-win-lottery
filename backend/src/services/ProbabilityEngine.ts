@@ -1,6 +1,6 @@
 import { detectGender } from '../utils/genderDetection';
 
-// Definizioni dei tipi per l'engine v2.0
+// Definizioni dei tipi per l'engine v2.1
 export interface PrizeConfig {
   id: number;
   name: string;
@@ -22,6 +22,9 @@ export interface EngineInput {
   prizeTypes: PrizeConfig[];
   customer: CustomerStats;
   prizesAssignedTotal: number;
+  // Nuovi campi per time pressure (v2.1)
+  promotionStartTime?: Date | null;
+  promotionEndTime?: Date | null;
 }
 
 export interface EngineOutput {
@@ -30,9 +33,15 @@ export interface EngineOutput {
   factors: {
     fatigue: number;
     pacing: number;
+    timePressure: number;
     finalModifier: number;
   };
 }
+
+// Costanti temporali
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const FIVE_MINUTES_MS = 5 * 60 * 1000;
+const ONE_MINUTE_MS = 60 * 1000;
 
 /**
  * Calcola il fattore di penalizzazione per giocatori frequenti.
@@ -73,20 +82,10 @@ function calculateFatigueFactor(totalPlays: number, totalWins: number): number {
 }
 
 /**
- * Calcola il fattore di pacing per distribuzione uniforme dei premi.
- *
- * Confronta il ritmo di distribuzione attuale con quello ideale:
- * - Se stiamo distribuendo troppo velocemente: rallenta
- * - Se stiamo distribuendo troppo lentamente: accelera
- *
- * SOGLIE:
- * - ratio > 1.3: troppo veloce, -40%
- * - ratio > 1.15: un po' troppo veloce, -20%
- * - ratio < 0.7: troppo lento, +40%
- * - ratio < 0.85: un po' troppo lento, +20%
- * - altrimenti: ritmo ideale, nessuna modifica
+ * Calcola il fattore di pacing base (senza time pressure).
+ * Usato quando non siamo nell'ultima ora o mancano i dati temporali.
  */
-function calculatePacingFactor(
+function calculateBasePacingFactor(
   usedTokens: number,
   totalTokens: number,
   prizesAssigned: number,
@@ -96,53 +95,161 @@ function calculatePacingFactor(
     return 1.0;
   }
 
-  // Percentuale di avanzamento
   const tokenProgress = usedTokens / totalTokens;
   const prizeProgress = prizesAssigned / totalInitialPrizes;
 
-  // Evita divisione per zero
   if (tokenProgress === 0) return 1.0;
 
-  // Rapporto: quanto velocemente stiamo distribuendo vs ideale
   const ratio = prizeProgress / tokenProgress;
 
   if (ratio > 1.3) {
-    // Troppo veloce: rallenta molto (-40%)
-    return 0.6;
+    return 0.6; // Troppo veloce: -40%
   } else if (ratio > 1.15) {
-    // Un po' troppo veloce: rallenta (-20%)
-    return 0.8;
+    return 0.8; // Un po' troppo veloce: -20%
   } else if (ratio < 0.7) {
-    // Troppo lento: accelera molto (+40%)
-    return 1.4;
+    return 1.4; // Troppo lento: +40%
   } else if (ratio < 0.85) {
-    // Un po' troppo lento: accelera (+20%)
-    return 1.2;
+    return 1.2; // Un po' troppo lento: +20%
   }
 
-  return 1.0; // Ritmo ideale
+  return 1.0;
+}
+
+/**
+ * Calcola il fattore di time pressure per l'ultima ora.
+ *
+ * FASI:
+ * - > 1 ora rimanente: pacing standard (ritorna 1.0, usa base pacing)
+ * - 1 ora -> 5 min: conservazione (rallenta se premi finirebbero troppo presto)
+ * - 5 min -> 1 min: distribuzione aggressiva (2x-5x boost)
+ * - < 1 min: massimo boost (fino a 10x)
+ *
+ * OBIETTIVO: I premi non devono finire prima degli ultimi 5 minuti
+ */
+function calculateTimePressureFactor(
+  usedTokens: number,
+  totalTokens: number,
+  prizesAssigned: number,
+  totalInitialPrizes: number,
+  promotionStartTime: Date,
+  promotionEndTime: Date
+): number {
+  const now = new Date();
+  const timeRemaining = promotionEndTime.getTime() - now.getTime();
+  const timeElapsed = now.getTime() - promotionStartTime.getTime();
+
+  const prizesRemaining = totalInitialPrizes - prizesAssigned;
+  const tokensRemaining = totalTokens - usedTokens;
+
+  // Edge cases
+  if (prizesRemaining <= 0) return 1.0; // Nessun premio rimasto
+  if (tokensRemaining <= 0) return 1.0; // Nessun token rimasto
+  if (timeRemaining <= 0) return 1.0; // Promo terminata
+  if (timeElapsed <= 0) return 1.0; // Promo non ancora iniziata
+
+  // === FASE 1: Piu' di 1 ora rimanente ===
+  // Usa pacing standard, ritorna 1.0 (nessun time pressure)
+  if (timeRemaining > ONE_HOUR_MS) {
+    return 1.0;
+  }
+
+  // Calcola il ritmo attuale di distribuzione premi (premi/ms)
+  const currentPrizeRate = timeElapsed > 0 ? prizesAssigned / timeElapsed : 0;
+
+  // Stima quando i premi finiranno al ritmo attuale
+  const estimatedTimeToEmpty = currentPrizeRate > 0
+    ? prizesRemaining / currentPrizeRate
+    : Infinity;
+
+  // === FASE 2: Ultima ora, ma non ultimi 5 minuti ===
+  // Obiettivo: conservare premi per gli ultimi 5 minuti
+  if (timeRemaining > FIVE_MINUTES_MS) {
+    const timeUntilFinalPhase = timeRemaining - FIVE_MINUTES_MS;
+
+    if (estimatedTimeToEmpty < timeUntilFinalPhase) {
+      // I premi finirebbero PRIMA degli ultimi 5 minuti -> RALLENTA
+      const slowdownRatio = estimatedTimeToEmpty / timeUntilFinalPhase;
+      // Rallenta proporzionalmente, minimo 0.3, massimo 0.8
+      return Math.max(0.3, Math.min(0.8, slowdownRatio));
+    } else {
+      // I premi dureranno fino alla fase finale
+      const margin = estimatedTimeToEmpty / timeUntilFinalPhase;
+      if (margin > 3) {
+        // Grande margine: leggero boost per non accumulare troppi premi
+        return 1.3;
+      } else if (margin > 2) {
+        return 1.15;
+      }
+      return 1.0;
+    }
+  }
+
+  // === FASE 3: Ultimi 5 minuti, ma non ultimo minuto ===
+  // Obiettivo: distribuire aggressivamente i premi rimanenti
+  if (timeRemaining > ONE_MINUTE_MS) {
+    // Calcola giocate attese nel tempo rimanente (basato su storico)
+    const playsPerMs = usedTokens / timeElapsed;
+    const expectedRemainingPlays = playsPerMs * timeRemaining;
+
+    if (expectedRemainingPlays <= 0) {
+      // Nessuna giocata attesa, massimo boost
+      return 5.0;
+    }
+
+    // Probabilita' richiesta = premi_rimasti / giocate_attese
+    const requiredWinRate = prizesRemaining / expectedRemainingPlays;
+
+    // Probabilita' base attuale = premi_rimasti / token_rimasti
+    const baseWinRate = prizesRemaining / tokensRemaining;
+
+    // Boost necessario per raggiungere il win rate richiesto
+    const boostNeeded = baseWinRate > 0 ? requiredWinRate / baseWinRate : 5.0;
+
+    // Limita boost tra 1.5x e 5x
+    return Math.max(1.5, Math.min(5.0, boostNeeded));
+  }
+
+  // === FASE 4: Ultimo minuto ===
+  // Massima urgenza: distribuire tutti i premi rimasti
+  if (prizesRemaining > 0) {
+    // Boost massimo 10x per garantire distribuzione
+    // Il fatigue continua ad applicarsi, quindi giocatori frequenti
+    // avranno comunque probabilita' ridotta
+    return 10.0;
+  }
+
+  return 1.0;
 }
 
 export class ProbabilityEngine {
   /**
    * Determina se l'utente ha vinto e quale premio.
    *
-   * Logica v2.0:
+   * Logica v2.1:
    * 1. Rileva genere (se non gia' salvato)
    * 2. Filtra premi disponibili e compatibili con genere
    * 3. Calcola fatigue factor (penalita giocatori frequenti)
-   * 4. Calcola pacing factor (distribuzione uniforme)
-   * 5. Applica modificatori alla probabilita base
-   * 6. Esegue estrazione casuale
+   * 4. Calcola base pacing factor (distribuzione uniforme)
+   * 5. Calcola time pressure factor (boost ultima ora)
+   * 6. Combina i fattori e applica alla probabilita base
+   * 7. Esegue estrazione casuale
    */
   determineOutcome(input: EngineInput): EngineOutput {
-    const { customer, prizeTypes, totalTokens, usedTokens, prizesAssignedTotal } = input;
+    const {
+      customer,
+      prizeTypes,
+      totalTokens,
+      usedTokens,
+      prizesAssignedTotal,
+      promotionStartTime,
+      promotionEndTime
+    } = input;
 
     // Risultato default (perdita)
     const lossResult: EngineOutput = {
       winner: false,
       prize: null,
-      factors: { fatigue: 1, pacing: 1, finalModifier: 1 },
+      factors: { fatigue: 1, pacing: 1, timePressure: 1, finalModifier: 1 },
     };
 
     // Verifica token rimasti
@@ -156,17 +263,12 @@ export class ProbabilityEngine {
 
     // 2. FILTRA PREMI DISPONIBILI E COMPATIBILI CON GENERE
     const eligiblePrizes = prizeTypes.filter((prize) => {
-      // Escludi se stock esaurito
       if (prize.remainingStock <= 0) return false;
-
-      // Escludi se restrizione genere non soddisfatta
       if (prize.genderRestriction === 'F' && gender !== 'F') return false;
       if (prize.genderRestriction === 'M' && gender !== 'M') return false;
-
       return true;
     });
 
-    // Se nessun premio disponibile, perdita certa
     if (eligiblePrizes.length === 0) {
       return lossResult;
     }
@@ -174,19 +276,38 @@ export class ProbabilityEngine {
     // 3. CALCOLO FATIGUE FACTOR
     const fatigue = calculateFatigueFactor(customer.totalPlays, customer.totalWins);
 
-    // 4. CALCOLO PACING FACTOR
+    // 4. CALCOLO BASE PACING FACTOR
     const totalInitialPrizes = prizeTypes.reduce((sum, p) => sum + p.initialStock, 0);
-    const pacing = calculatePacingFactor(
+    const basePacing = calculateBasePacingFactor(
       usedTokens,
       totalTokens,
       prizesAssignedTotal,
       totalInitialPrizes
     );
 
-    // 5. MODIFICATORE GLOBALE
+    // 5. CALCOLO TIME PRESSURE FACTOR
+    let timePressure = 1.0;
+    if (promotionStartTime && promotionEndTime) {
+      const startTime = new Date(promotionStartTime);
+      const endTime = new Date(promotionEndTime);
+
+      timePressure = calculateTimePressureFactor(
+        usedTokens,
+        totalTokens,
+        prizesAssignedTotal,
+        totalInitialPrizes,
+        startTime,
+        endTime
+      );
+    }
+
+    // 6. COMBINA I FATTORI
+    // Se siamo nell'ultima ora (timePressure != 1), usiamo timePressure invece di basePacing
+    // Questo perche' timePressure include gia' la logica di conservazione/distribuzione
+    const pacing = timePressure !== 1.0 ? timePressure : basePacing;
     const globalModifier = fatigue * pacing;
 
-    // 6. CALCOLO PROBABILITA CUMULATIVE
+    // 7. CALCOLO PROBABILITA CUMULATIVE
     let cumulative = 0;
     const probabilities: Array<{ prize: PrizeConfig; threshold: number }> = [];
 
@@ -197,7 +318,7 @@ export class ProbabilityEngine {
       probabilities.push({ prize, threshold: cumulative });
     }
 
-    // 7. ESTRAZIONE CASUALE
+    // 8. ESTRAZIONE CASUALE
     const random = Math.random();
 
     for (const { prize, threshold } of probabilities) {
@@ -205,7 +326,12 @@ export class ProbabilityEngine {
         return {
           winner: true,
           prize,
-          factors: { fatigue, pacing, finalModifier: globalModifier },
+          factors: {
+            fatigue,
+            pacing: basePacing,
+            timePressure,
+            finalModifier: globalModifier
+          },
         };
       }
     }
@@ -214,7 +340,12 @@ export class ProbabilityEngine {
     return {
       winner: false,
       prize: null,
-      factors: { fatigue, pacing, finalModifier: globalModifier },
+      factors: {
+        fatigue,
+        pacing: basePacing,
+        timePressure,
+        finalModifier: globalModifier
+      },
     };
   }
 }
