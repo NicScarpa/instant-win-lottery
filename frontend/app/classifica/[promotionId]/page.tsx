@@ -152,11 +152,6 @@ export default function PublicLeaderboardPage() {
                     </div>
                 )}
             </main>
-
-            {/* Footer */}
-            <footer className="text-center text-[10px] text-white/60 py-4 mt-auto uppercase tracking-widest">
-                Campari Soda Instant Win
-            </footer>
         </div>
     );
 }
