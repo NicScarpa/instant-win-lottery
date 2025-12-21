@@ -12,6 +12,11 @@ interface PromotionSelectorProps {
     onUpdatePromotions: () => void;
     onForceDataRefresh: () => void;
     currentPromotion: Promotion;
+    // Triggers from mobile sidebar
+    triggerEdit?: boolean;
+    triggerDelete?: boolean;
+    onTriggerEditHandled?: () => void;
+    onTriggerDeleteHandled?: () => void;
 }
 
 export default function PromotionSelector({
@@ -21,6 +26,10 @@ export default function PromotionSelector({
     onUpdatePromotions,
     onForceDataRefresh,
     currentPromotion,
+    triggerEdit,
+    triggerDelete,
+    onTriggerEditHandled,
+    onTriggerDeleteHandled,
 }: PromotionSelectorProps) {
     
     // Stato per la modifica
@@ -69,6 +78,22 @@ export default function PromotionSelector({
         setSuccessMessage('');
         setErrorMessage('');
     }, [currentPromotion]);
+
+    // Gestione trigger da sidebar mobile
+    React.useEffect(() => {
+        if (triggerEdit) {
+            setIsEditing(true);
+            setIsCreating(false);
+            onTriggerEditHandled?.();
+        }
+    }, [triggerEdit, onTriggerEditHandled]);
+
+    React.useEffect(() => {
+        if (triggerDelete) {
+            handleDeletePromotion();
+            onTriggerDeleteHandled?.();
+        }
+    }, [triggerDelete, onTriggerDeleteHandled]);
 
     // --- FUNZIONI LOGICHE ---
     const handleCreatePromotion = async (e: React.FormEvent) => {
@@ -228,41 +253,42 @@ export default function PromotionSelector({
                      </span>
                  </div>
                  
-                 {/* GRUPPO PULSANTI */}
-                 <div className="grid grid-cols-1 sm:grid-cols-2 md:flex md:flex-row gap-2 w-full lg:w-auto">
-                      <button 
+                 {/* GRUPPO PULSANTI - Solo Nuova visibile qui, gli altri in Sidebar su mobile */}
+                 <div className="flex flex-row gap-2 w-full lg:w-auto">
+                      <button
                          onClick={() => { setIsCreating(!isCreating); setIsEditing(false); }}
-                         className={`px-4 py-2 rounded-lg transition text-sm font-medium shadow-sm w-full md:w-auto ${
+                         className={`px-4 py-2 rounded-lg transition text-sm font-medium shadow-sm ${
                              isCreating ? 'bg-gray-600 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700'
                          }`}
                       >
-                         {isCreating ? 'Annulla' : '✨ Nuova'}
+                         {isCreating ? 'Annulla' : '+ Nuova'}
                       </button>
-                      
-                      <button 
+
+                      {/* Pulsanti nascosti su mobile, visibili solo su desktop */}
+                      <button
                          onClick={onForceDataRefresh}
-                         className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm font-medium w-full md:w-auto"
+                         className="hidden md:block px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition text-sm font-medium"
                          disabled={isEditing || isCreating}
                       >
-                         🔄 Aggiorna
+                         Aggiorna
                       </button>
-                      
-                      <button 
+
+                      <button
                          onClick={() => { setIsEditing(!isEditing); setIsCreating(false); }}
-                         className={`px-4 py-2 rounded-lg transition text-sm font-medium shadow-sm w-full md:w-auto ${
+                         className={`hidden md:block px-4 py-2 rounded-lg transition text-sm font-medium shadow-sm ${
                              isEditing ? 'bg-red-500 text-white' : 'bg-amber-500 text-white hover:bg-amber-600'
                          }`}
                          disabled={isCreating}
                       >
-                         {isEditing ? 'Annulla' : '⚙️ Modifica'}
+                         {isEditing ? 'Annulla' : 'Modifica'}
                       </button>
-                      
-                       <button 
+
+                       <button
                          onClick={handleDeletePromotion}
-                         className="px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition text-sm font-medium w-full md:w-auto"
+                         className="hidden md:block px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition text-sm font-medium"
                          disabled={isEditing || isCreating || promotions.length <= 1}
                       >
-                         🗑️ Elimina
+                         Elimina
                       </button>
                  </div>
             </div>

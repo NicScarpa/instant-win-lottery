@@ -15,7 +15,9 @@ import PrizeOverview from './components/PrizeOverview';
 import Sidebar from './components/Sidebar';
 import AdminLeaderboard from './components/AdminLeaderboard';
 import RevenueStats from './components/RevenueStats';
-import { getApiUrl } from '../../lib/api'; // <--- IMPORTANTE
+import TopNav from './components/TopNav';
+import StatsHeader from './components/StatsHeader';
+import { getApiUrl } from '../../lib/api';
 
 export interface Promotion {
     id: string;
@@ -32,7 +34,7 @@ export default function AdminDashboardPage() {
     const [promotions, setPromotions] = useState<Promotion[]>([]);
     const [selectedPromotionId, setSelectedPromotionId] = useState<string>('');
     const [dataRefreshKey, setDataRefreshKey] = useState(0);
-    const [currentView, setCurrentView] = useState('dashboard'); // SPOSTATO QUI: deve stare prima di ogni return condizionale
+    const [currentView, setCurrentView] = useState('dashboard');
 
     // Stati per il form di creazione "Bootstrap"
     const [newName, setNewName] = useState('');
@@ -42,15 +44,17 @@ export default function AdminDashboardPage() {
     const [createError, setCreateError] = useState('');
     const [isCreating, setIsCreating] = useState(false);
 
+    // Stati per controllo modifica/elimina da sidebar mobile
+    const [triggerEdit, setTriggerEdit] = useState(false);
+    const [triggerDelete, setTriggerDelete] = useState(false);
+
     const forceDataRefresh = () => {
         setDataRefreshKey(prevKey => prevKey + 1);
     }
 
     const handleLogout = async () => {
         setLoading(true);
-        // Remove token from localStorage
         localStorage.removeItem('admin_token');
-        // Call logout endpoint
         await fetch(getApiUrl('api/auth/logout'), {
             method: 'POST',
             credentials: 'include'
@@ -92,7 +96,6 @@ export default function AdminDashboardPage() {
 
     const checkSession = async () => {
         try {
-            // Check if token exists in localStorage
             const token = localStorage.getItem('admin_token');
             if (!token) {
                 router.push('/admin/login');
@@ -117,7 +120,6 @@ export default function AdminDashboardPage() {
                 await fetchPromotions();
                 setLoading(false);
             } else {
-                // Token non valido, rimuovilo e redirect a login
                 localStorage.removeItem('admin_token');
                 router.push('/admin/login');
             }
@@ -177,18 +179,25 @@ export default function AdminDashboardPage() {
     }, []);
 
     if (loading) {
-        return <div className="min-h-screen flex items-center justify-center">Caricamento...</div>;
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-[#f3efe6]">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="w-12 h-12 border-4 border-[#b42a28] border-t-transparent rounded-full animate-spin"></div>
+                    <p className="text-gray-600 font-medium">Caricamento...</p>
+                </div>
+            </div>
+        );
     }
 
     if (promotions.length === 0) {
         return (
-            <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-4">
-                <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-lg">
+            <div className="min-h-screen flex flex-col items-center justify-center bg-[#f3efe6] p-4">
+                <div className="card-glass p-8 rounded-[2rem] shadow-xl w-full max-w-lg">
                     <h1 className="text-2xl font-bold text-gray-800 mb-2 text-center">Benvenuto</h1>
                     <p className="text-gray-600 mb-6 text-center">Il database è vuoto. Configura la tua prima promozione per accedere alla dashboard.</p>
 
                     {createError && (
-                        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded text-sm">{createError}</div>
+                        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-xl text-sm">{createError}</div>
                     )}
 
                     <form onSubmit={handleCreateFirstPromotion} className="space-y-4">
@@ -196,7 +205,7 @@ export default function AdminDashboardPage() {
                             <label className="block text-sm font-medium text-gray-700">Nome Promozione</label>
                             <input
                                 type="text"
-                                className="mt-1 block w-full border border-gray-300 rounded-md p-2 text-black"
+                                className="mt-1 block w-full border border-gray-300 rounded-xl p-3 text-black focus:ring-2 focus:ring-[#b42a28] focus:border-transparent transition"
                                 placeholder="Es. Campari Summer Party"
                                 value={newName}
                                 onChange={e => setNewName(e.target.value)}
@@ -207,7 +216,7 @@ export default function AdminDashboardPage() {
                             <label className="block text-sm font-medium text-gray-700">Token Totali</label>
                             <input
                                 type="number"
-                                className="mt-1 block w-full border border-gray-300 rounded-md p-2 text-black"
+                                className="mt-1 block w-full border border-gray-300 rounded-xl p-3 text-black focus:ring-2 focus:ring-[#b42a28] focus:border-transparent transition"
                                 value={newCount}
                                 onChange={e => setNewCount(parseInt(e.target.value))}
                                 min="1"
@@ -219,7 +228,7 @@ export default function AdminDashboardPage() {
                                 <label className="block text-sm font-medium text-gray-700">Inizio (ISO Date)</label>
                                 <input
                                     type="text"
-                                    className="mt-1 block w-full border border-gray-300 rounded-md p-2 text-black text-xs"
+                                    className="mt-1 block w-full border border-gray-300 rounded-xl p-3 text-black text-xs focus:ring-2 focus:ring-[#b42a28] focus:border-transparent transition"
                                     placeholder="2024-01-01T00:00:00Z"
                                     value={newStart}
                                     onChange={e => setNewStart(e.target.value)}
@@ -230,7 +239,7 @@ export default function AdminDashboardPage() {
                                 <label className="block text-sm font-medium text-gray-700">Fine (ISO Date)</label>
                                 <input
                                     type="text"
-                                    className="mt-1 block w-full border border-gray-300 rounded-md p-2 text-black text-xs"
+                                    className="mt-1 block w-full border border-gray-300 rounded-xl p-3 text-black text-xs focus:ring-2 focus:ring-[#b42a28] focus:border-transparent transition"
                                     placeholder="2024-12-31T23:59:59Z"
                                     value={newEnd}
                                     onChange={e => setNewEnd(e.target.value)}
@@ -241,9 +250,9 @@ export default function AdminDashboardPage() {
                         <button
                             type="submit"
                             disabled={isCreating}
-                            className="w-full bg-blue-600 text-white p-3 rounded-md hover:bg-blue-700 transition font-semibold"
+                            className="w-full bg-[#b42a28] text-white p-4 rounded-full hover:brightness-110 transition font-semibold shadow-lg shadow-[#b42a28]/20"
                         >
-                            {isCreating ? 'Creazione in corso...' : '🚀 Crea e Inizia'}
+                            {isCreating ? 'Creazione in corso...' : 'Crea e Inizia'}
                         </button>
                     </form>
 
@@ -260,24 +269,39 @@ export default function AdminDashboardPage() {
     if (!currentPromotion) return <div>Errore stato dashboard. Ricarica la pagina.</div>;
 
     return (
-        <div className="flex flex-col md:flex-row bg-[#F5F5F7] min-h-screen font-sans overflow-hidden">
-            {/* Sidebar */}
+        <div className="min-h-screen bg-[#f3efe6] font-sans relative overflow-hidden">
+            {/* Background radial gradients */}
+            <div className="fixed top-[-10%] right-[-10%] w-[1000px] h-[1000px] bg-[#b42a28]/5 rounded-full blur-[150px] animate-pulse pointer-events-none"></div>
+            <div className="fixed bottom-[-5%] left-[-5%] w-[800px] h-[800px] bg-white rounded-full blur-[150px] pointer-events-none"></div>
+
+            {/* Mobile Sidebar Component (only renders on mobile) */}
             <Sidebar
                 currentView={currentView}
                 onChangeView={setCurrentView}
                 onLogout={handleLogout}
+                onRefreshData={forceDataRefresh}
+                onEditPromotion={() => setTriggerEdit(true)}
+                onDeletePromotion={() => setTriggerDelete(true)}
+                canDelete={promotions.length > 1}
             />
 
             {/* Main Content */}
-            <main className="flex-1 flex flex-col h-screen overflow-hidden relative z-0 pt-14 md:pt-0">
-                {/* Mobile Header - Shows promotion selector on mobile */}
-                <div className="md:hidden bg-white/95 backdrop-blur-md sticky top-0 z-20 px-4 py-3 border-b border-gray-100">
+            <div className="relative z-10 max-w-[1680px] mx-auto pb-16">
+                {/* Desktop Top Navigation */}
+                <TopNav
+                    currentView={currentView}
+                    onChangeView={setCurrentView}
+                    onLogout={handleLogout}
+                />
+
+                {/* Mobile Sub-header with promotion selector */}
+                <div className="md:hidden bg-white/70 backdrop-blur-md sticky top-14 z-20 px-4 py-3 border-b border-white/30">
                     <div className="flex items-center justify-between">
                         <h2 className="text-lg font-bold text-gray-800 capitalize">{currentView}</h2>
                         <select
                             value={selectedPromotionId}
                             onChange={(e) => setSelectedPromotionId(e.target.value)}
-                            className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-800 max-w-[150px]"
+                            className="text-sm border border-gray-200 rounded-full px-3 py-1.5 bg-white text-gray-800 max-w-[150px]"
                         >
                             {promotions.map((p) => (
                                 <option key={p.id} value={p.id}>{p.name}</option>
@@ -286,13 +310,9 @@ export default function AdminDashboardPage() {
                     </div>
                 </div>
 
-                {/* Desktop Header / Top Bar */}
-                <div className="hidden md:flex bg-white/80 backdrop-blur-md sticky top-0 z-30 px-6 py-4 justify-between items-center border-b border-gray-100">
-                    <div>
-                        <h2 className="text-xl font-bold text-gray-800 capitalize">{currentView}</h2>
-                        <p className="text-xs text-gray-400">Bentornato Staff</p>
-                    </div>
-                    <div className="flex items-center space-x-4">
+                {/* Promotion Selector - Visibile sempre quando triggerEdit è attivo su mobile */}
+                <div className={`${triggerEdit ? 'block' : 'hidden md:block'} px-4 md:px-10 mb-4`}>
+                    <div className="md:flex md:justify-end">
                         <PromotionSelector
                             promotions={promotions}
                             selectedPromotionId={currentPromotion.id}
@@ -300,50 +320,71 @@ export default function AdminDashboardPage() {
                             onUpdatePromotions={fetchPromotions}
                             onForceDataRefresh={forceDataRefresh}
                             currentPromotion={currentPromotion}
+                            triggerEdit={triggerEdit}
+                            triggerDelete={triggerDelete}
+                            onTriggerEditHandled={() => setTriggerEdit(false)}
+                            onTriggerDeleteHandled={() => setTriggerDelete(false)}
                         />
-                        <div className="h-8 w-8 rounded-full bg-gray-200 overflow-hidden">
-                            <img src="https://ui-avatars.com/api/?name=Staff+Admin&background=E3001B&color=fff" alt="Profile" />
-                        </div>
                     </div>
                 </div>
 
-                {/* Scrollable Content Area */}
-                <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-24 md:pb-6">
-                    <div className="max-w-5xl mx-auto space-y-6">
+                {/* Stats Header - Only on Dashboard view */}
+                {currentView === 'dashboard' && (
+                    <StatsHeader
+                        promotionId={currentPromotion.id}
+                        promotionName={currentPromotion.name}
+                        refreshKey={dataRefreshKey}
+                    />
+                )}
+
+                {/* Content Area */}
+                <div className="px-4 md:px-10 mt-8 md:mt-12 pt-14 md:pt-0">
+                    <div className="max-w-6xl mx-auto space-y-6 md:space-y-8">
 
                         {/* VIEW: DASHBOARD */}
                         {currentView === 'dashboard' && (
                             <>
-                                {/* Revenue Stats - Full Width (Prima sezione) */}
-                                <RevenueStats
-                                    promotionId={currentPromotion.id}
-                                    refreshKey={dataRefreshKey}
-                                />
+                                {/* Revenue Stats */}
+                                <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
+                                    <RevenueStats
+                                        promotionId={currentPromotion.id}
+                                        refreshKey={dataRefreshKey}
+                                    />
+                                </div>
 
-                                {/* Prize Overview - Full Width */}
-                                <PrizeOverview
-                                    promotionId={currentPromotion.id}
-                                    refreshKey={dataRefreshKey}
-                                />
+                                {/* Two Column Grid for Desktop */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+                                    {/* Prize Overview */}
+                                    <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
+                                        <PrizeOverview
+                                            promotionId={currentPromotion.id}
+                                            refreshKey={dataRefreshKey}
+                                        />
+                                    </div>
 
-                                {/* Stats Card - Full Width */}
-                                <StatsCard
-                                    promotionId={currentPromotion.id}
-                                    key={`stats-${currentPromotion.id}-${dataRefreshKey}`}
-                                />
+                                    {/* Stats Card */}
+                                    <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
+                                        <StatsCard
+                                            promotionId={currentPromotion.id}
+                                            key={`stats-${currentPromotion.id}-${dataRefreshKey}`}
+                                        />
+                                    </div>
+                                </div>
 
                                 {/* Live Leaderboard */}
-                                <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-2xl">🏆</span>
-                                            <h3 className="font-bold text-gray-800">Classifica Live</h3>
+                                <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 bg-[#b42a28]/10 rounded-full flex items-center justify-center">
+                                                <span className="text-xl">🏆</span>
+                                            </div>
+                                            <h3 className="font-bold text-xl text-gray-800">Classifica Live</h3>
                                         </div>
                                         <a
                                             href={`/classifica/${currentPromotion.id}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="text-sm text-[#E3001B] font-medium hover:underline flex items-center gap-1"
+                                            className="text-sm text-[#b42a28] font-medium hover:underline flex items-center gap-1 px-4 py-2 bg-[#b42a28]/10 rounded-full transition hover:bg-[#b42a28]/20"
                                         >
                                             Pagina Pubblica
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -357,11 +398,16 @@ export default function AdminDashboardPage() {
                                     />
                                 </div>
 
-                                {/* Recent Activity - Ultimi Token Utilizzati */}
-                                <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h3 className="font-bold text-gray-800">Ultimi Token Utilizzati</h3>
-                                        <button onClick={() => setCurrentView('token')} className="text-sm text-[#E3001B] font-medium hover:underline">Gestione Token</button>
+                                {/* Recent Activity */}
+                                <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <h3 className="font-bold text-xl text-gray-800">Ultimi Token Utilizzati</h3>
+                                        <button
+                                            onClick={() => setCurrentView('token')}
+                                            className="text-sm text-[#b42a28] font-medium px-4 py-2 bg-[#b42a28]/10 rounded-full transition hover:bg-[#b42a28]/20"
+                                        >
+                                            Gestione Token
+                                        </button>
                                     </div>
                                     <UsedTokensList
                                         promotionId={currentPromotion.id}
@@ -374,17 +420,17 @@ export default function AdminDashboardPage() {
 
                         {/* VIEW: TOKEN */}
                         {currentView === 'token' && (
-                            <div className="space-y-6">
-                                {/* Gestione Token - Genera e Scarica */}
-                                <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                            <div className="space-y-6 md:space-y-8">
+                                {/* Gestione Token */}
+                                <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
                                     <div className="flex items-center gap-3 mb-6">
-                                        <div className="p-3 bg-[#E3001B]/10 rounded-xl">
-                                            <svg className="w-6 h-6 text-[#E3001B]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <div className="p-3 bg-[#b42a28]/10 rounded-2xl">
+                                            <svg className="w-6 h-6 text-[#b42a28]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                                             </svg>
                                         </div>
                                         <div>
-                                            <h3 className="font-bold text-lg">Gestione Token</h3>
+                                            <h3 className="font-bold text-xl">Gestione Token</h3>
                                             <p className="text-sm text-gray-500">Genera nuovi token e scarica PDF per la stampa</p>
                                         </div>
                                     </div>
@@ -395,18 +441,15 @@ export default function AdminDashboardPage() {
                                     />
                                 </div>
 
-                                {/* Liste Token - Side by side on desktop */}
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                    {/* Token Disponibili */}
-                                    <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                                {/* Liste Token */}
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+                                    <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
                                         <TokenListTable
                                             promotionId={currentPromotion.id}
                                             key={`table-available-${currentPromotion.id}-${dataRefreshKey}`}
                                         />
                                     </div>
-
-                                    {/* Token Utilizzati */}
-                                    <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                                    <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
                                         <UsedTokensTable
                                             promotionId={currentPromotion.id}
                                             key={`table-used-${currentPromotion.id}-${dataRefreshKey}`}
@@ -418,33 +461,34 @@ export default function AdminDashboardPage() {
 
                         {/* VIEW: PREMI */}
                         {currentView === 'premi' && (
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                {/* Aggiungi nuovo premio */}
-                                <PrizeManager
-                                    promotionId={currentPromotion.id}
-                                    promotionName={currentPromotion.name}
-                                    onPrizeChange={forceDataRefresh}
-                                />
-                                {/* Lista premi esistenti con modifica/reset/elimina */}
-                                <PrizeList
-                                    promotionId={currentPromotion.id}
-                                    onPrizeChange={forceDataRefresh}
-                                    refreshKey={dataRefreshKey}
-                                />
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+                                <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
+                                    <PrizeManager
+                                        promotionId={currentPromotion.id}
+                                        promotionName={currentPromotion.name}
+                                        onPrizeChange={forceDataRefresh}
+                                    />
+                                </div>
+                                <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
+                                    <PrizeList
+                                        promotionId={currentPromotion.id}
+                                        onPrizeChange={forceDataRefresh}
+                                        refreshKey={dataRefreshKey}
+                                    />
+                                </div>
                             </div>
                         )}
 
                         {/* VIEW: LOG */}
                         {currentView === 'log' && (
-                            <div className="space-y-6">
-                                {/* Archivio Giocatori */}
-                                <PlayersArchive
-                                    promotionId={currentPromotion.id}
-                                    key={`players-${currentPromotion.id}-${dataRefreshKey}`}
-                                />
-
-                                {/* Storico Giocate */}
-                                <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
+                            <div className="space-y-6 md:space-y-8">
+                                <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
+                                    <PlayersArchive
+                                        promotionId={currentPromotion.id}
+                                        key={`players-${currentPromotion.id}-${dataRefreshKey}`}
+                                    />
+                                </div>
+                                <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
                                     <PlayLogViewer
                                         promotionId={currentPromotion.id}
                                         key={`logs-${currentPromotion.id}-${dataRefreshKey}`}
@@ -455,7 +499,7 @@ export default function AdminDashboardPage() {
 
                     </div>
                 </div>
-            </main>
+            </div>
         </div>
     );
 }
