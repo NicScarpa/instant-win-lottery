@@ -628,6 +628,22 @@ app.get('/api/admin/stats/:promotionId', authenticateToken, authorizeRole('admin
 const SALE_PRICE = 3.00;  // Prezzo vendita Campari Soda
 const UNIT_COST = 0.84;   // Costo acquisto
 
+// Helper functions per fuso orario italiano (Europe/Rome)
+function getItalianDateString(date: Date): string {
+  // Ritorna data in formato YYYY-MM-DD nel fuso orario italiano
+  return date.toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' }); // sv-SE usa formato ISO
+}
+
+function getItalianHour(date: Date): number {
+  // Ritorna l'ora (0-23) nel fuso orario italiano
+  const hourStr = date.toLocaleString('en-US', {
+    timeZone: 'Europe/Rome',
+    hour: 'numeric',
+    hour12: false
+  });
+  return parseInt(hourStr, 10);
+}
+
 app.get('/api/admin/revenue/:promotionId', authenticateToken, authorizeRole('admin'), async (req, res) => {
   const { promotionId } = req.params;
   const { date } = req.query; // Opzionale: filtra per giorno specifico
@@ -680,11 +696,11 @@ app.get('/api/admin/revenue/:promotionId', authenticateToken, authorizeRole('adm
       select: { used_at: true }
     });
 
-    // Raggruppa per data manualmente
+    // Raggruppa per data manualmente (usando fuso orario italiano)
     const dailyMap = new Map<string, number>();
     usedTokens.forEach(token => {
       if (token.used_at) {
-        const dateKey = token.used_at.toISOString().split('T')[0];
+        const dateKey = getItalianDateString(token.used_at);
         dailyMap.set(dateKey, (dailyMap.get(dateKey) || 0) + 1);
       }
     });
@@ -720,17 +736,17 @@ app.get('/api/admin/revenue/:promotionId', authenticateToken, authorizeRole('adm
     const dailyAverage = daysWithSales > 0 ? unitsSold / daysWithSales : 0;
     const dailyAverageRevenue = daysWithSales > 0 ? totalRevenue / daysWithSales : 0;
 
-    // 7. Distribuzione oraria - raggruppa per ora manualmente
+    // 7. Distribuzione oraria - raggruppa per ora manualmente (fuso orario italiano)
     const hourlyMap = new Map<number, number>();
 
-    // Filtra per data se specificata
+    // Filtra per data se specificata (usando fuso orario italiano)
     const tokensForHourly = date
-      ? usedTokens.filter(t => t.used_at && t.used_at.toISOString().split('T')[0] === date)
+      ? usedTokens.filter(t => t.used_at && getItalianDateString(t.used_at) === date)
       : usedTokens;
 
     tokensForHourly.forEach(token => {
       if (token.used_at) {
-        const hour = token.used_at.getHours();
+        const hour = getItalianHour(token.used_at);
         hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + 1);
       }
     });
