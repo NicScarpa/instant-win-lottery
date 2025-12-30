@@ -17,8 +17,14 @@ const authMiddleware_1 = require("./middlewares/authMiddleware");
 const tenantMiddleware_1 = require("./middlewares/tenantMiddleware");
 const licenseMiddleware_1 = require("./middlewares/licenseMiddleware");
 const LicenseService_1 = require("./services/LicenseService");
+const LicenseNotificationService_1 = require("./services/LicenseNotificationService");
+const AuditService_1 = require("./services/AuditService");
+const EmailService_1 = require("./services/EmailService");
 const qrcode_1 = __importDefault(require("qrcode"));
 const pdfkit_1 = __importDefault(require("pdfkit"));
+const multer_1 = __importDefault(require("multer"));
+const path_1 = __importDefault(require("path"));
+const fs_1 = __importDefault(require("fs"));
 const app = (0, express_1.default)();
 const prisma = new client_1.PrismaClient();
 const PORT = process.env.PORT || 3001;
@@ -84,6 +90,49 @@ app.use((0, cors_1.default)({
 }));
 app.use(express_1.default.json());
 app.use((0, cookie_parser_1.default)());
+// --- FILE UPLOAD CONFIGURATION ---
+const UPLOADS_DIR = path_1.default.join(__dirname, '..', 'uploads');
+// Ensure uploads directory exists
+if (!fs_1.default.existsSync(UPLOADS_DIR)) {
+    fs_1.default.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+// Serve uploaded files statically
+app.use('/uploads', express_1.default.static(UPLOADS_DIR));
+// Multer storage configuration with tenant isolation
+const storage = multer_1.default.diskStorage({
+    destination: (req, file, cb) => {
+        // Create tenant-specific subdirectory
+        const tenantId = req.tenantId || 'default';
+        const tenantDir = path_1.default.join(UPLOADS_DIR, tenantId);
+        if (!fs_1.default.existsSync(tenantDir)) {
+            fs_1.default.mkdirSync(tenantDir, { recursive: true });
+        }
+        cb(null, tenantDir);
+    },
+    filename: (req, file, cb) => {
+        // Generate unique filename with original extension
+        const ext = path_1.default.extname(file.originalname);
+        const uniqueName = `${Date.now()}-${crypto_1.default.randomBytes(8).toString('hex')}${ext}`;
+        cb(null, uniqueName);
+    }
+});
+// File filter for images only
+const imageFileFilter = (req, file, cb) => {
+    const allowedMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+    if (allowedMimes.includes(file.mimetype)) {
+        cb(null, true);
+    }
+    else {
+        cb(new Error('Only image files are allowed'));
+    }
+};
+const upload = (0, multer_1.default)({
+    storage,
+    fileFilter: imageFileFilter,
+    limits: {
+        fileSize: 5 * 1024 * 1024 // 5MB max
+    }
+});
 // --- RATE LIMITING ---
 // Strategia: limiti alti per IP (tutti i clienti del locale condividono WiFi),
 // limiti stretti per singolo customer (prevenzione abusi individuali)
@@ -229,6 +278,183 @@ app.post('/api/auth/refresh', authMiddleware_1.authenticateTokenForRefresh, (req
     }
 });
 // ==========================================
+// 1A. PASSWORD RESET
+// ==========================================
+// Request password reset (send email)
+app.post('/api/auth/forgot-password', authLimiter, tenantMiddleware_1.resolveTenant, async (req, res) => {
+    const { email, username } = req.body;
+    if (!email && !username) {
+        return res.status(400).json({ error: 'Email o username richiesto' });
+    }
+    try {
+        // Find staff user by email (from tenant admin email) or username
+        let staffUser = null;
+        if (username) {
+            staffUser = await prisma.staffUser.findFirst({
+                where: {
+                    username,
+                    tenantId: req.tenantId
+                },
+                include: { tenant: true }
+            });
+        }
+        // Always return success to prevent user enumeration
+        if (!staffUser) {
+            console.log('[PasswordReset] User not found, returning success anyway');
+            return res.json({
+                success: true,
+                message: 'Se l\'utente esiste, riceverai un\'email con le istruzioni'
+            });
+        }
+        // Generate reset token
+        const resetToken = crypto_1.default.randomBytes(32).toString('hex');
+        const resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+        // Save token to database
+        await prisma.staffUser.update({
+            where: { id: staffUser.id },
+            data: {
+                resetToken,
+                resetTokenExpiry
+            }
+        });
+        // Build reset URL
+        const resetUrl = `${APP_URL}/admin/reset-password?token=${resetToken}`;
+        // Send email
+        const emailSent = await EmailService_1.emailService.sendPasswordResetEmail(staffUser.tenant.adminEmail, resetUrl, staffUser.username, staffUser.tenant.name);
+        if (!emailSent) {
+            console.warn('[PasswordReset] Email not sent (SMTP not configured). Token:', resetToken);
+        }
+        res.json({
+            success: true,
+            message: 'Se l\'utente esiste, riceverai un\'email con le istruzioni',
+            // In development, return token for testing
+            ...(process.env.NODE_ENV === 'development' && { devToken: resetToken, devResetUrl: resetUrl })
+        });
+    }
+    catch (err) {
+        console.error('[PasswordReset] Error:', err);
+        res.status(500).json({ error: 'Errore durante la richiesta di reset password' });
+    }
+});
+// Verify reset token (check if valid)
+app.post('/api/auth/verify-reset-token', async (req, res) => {
+    const { token } = req.body;
+    if (!token) {
+        return res.status(400).json({ error: 'Token mancante' });
+    }
+    try {
+        const staffUser = await prisma.staffUser.findFirst({
+            where: {
+                resetToken: token,
+                resetTokenExpiry: { gt: new Date() }
+            }
+        });
+        if (!staffUser) {
+            return res.status(400).json({ error: 'Token non valido o scaduto' });
+        }
+        res.json({ success: true, username: staffUser.username });
+    }
+    catch (err) {
+        console.error('[VerifyResetToken] Error:', err);
+        res.status(500).json({ error: 'Errore durante la verifica del token' });
+    }
+});
+// Reset password with token
+app.post('/api/auth/reset-password', async (req, res) => {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) {
+        return res.status(400).json({ error: 'Token e nuova password richiesti' });
+    }
+    if (newPassword.length < 8) {
+        return res.status(400).json({ error: 'La password deve essere di almeno 8 caratteri' });
+    }
+    try {
+        const staffUser = await prisma.staffUser.findFirst({
+            where: {
+                resetToken: token,
+                resetTokenExpiry: { gt: new Date() }
+            },
+            include: { tenant: true }
+        });
+        if (!staffUser) {
+            return res.status(400).json({ error: 'Token non valido o scaduto' });
+        }
+        // Hash new password
+        const passwordHash = await bcrypt_1.default.hash(newPassword, 10);
+        // Update password and clear reset token
+        await prisma.staffUser.update({
+            where: { id: staffUser.id },
+            data: {
+                password_hash: passwordHash,
+                resetToken: null,
+                resetTokenExpiry: null
+            }
+        });
+        // Log audit
+        await AuditService_1.AuditService.log({
+            tenantId: staffUser.tenantId,
+            action: 'PASSWORD_RESET',
+            entity: 'staff',
+            entityId: staffUser.id.toString(),
+            details: { username: staffUser.username },
+            userId: staffUser.id,
+            userType: 'staff',
+            username: staffUser.username
+        });
+        res.json({ success: true, message: 'Password aggiornata con successo' });
+    }
+    catch (err) {
+        console.error('[ResetPassword] Error:', err);
+        res.status(500).json({ error: 'Errore durante il reset della password' });
+    }
+});
+// Change password (authenticated user)
+app.post('/api/auth/change-password', authMiddleware_1.authenticateToken, async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+        return res.status(400).json({ error: 'Password attuale e nuova password richieste' });
+    }
+    if (newPassword.length < 8) {
+        return res.status(400).json({ error: 'La password deve essere di almeno 8 caratteri' });
+    }
+    try {
+        const staffUser = await prisma.staffUser.findUnique({
+            where: { id: req.user.id }
+        });
+        if (!staffUser) {
+            return res.status(404).json({ error: 'Utente non trovato' });
+        }
+        // Verify current password
+        const validPassword = await bcrypt_1.default.compare(currentPassword, staffUser.password_hash);
+        if (!validPassword) {
+            return res.status(401).json({ error: 'Password attuale non corretta' });
+        }
+        // Hash new password
+        const passwordHash = await bcrypt_1.default.hash(newPassword, 10);
+        // Update password
+        await prisma.staffUser.update({
+            where: { id: staffUser.id },
+            data: { password_hash: passwordHash }
+        });
+        // Log audit
+        await AuditService_1.AuditService.log({
+            tenantId: staffUser.tenantId,
+            action: 'PASSWORD_CHANGED',
+            entity: 'staff',
+            entityId: staffUser.id.toString(),
+            details: { username: staffUser.username },
+            userId: staffUser.id,
+            userType: 'staff',
+            username: staffUser.username
+        });
+        res.json({ success: true, message: 'Password aggiornata con successo' });
+    }
+    catch (err) {
+        console.error('[ChangePassword] Error:', err);
+        res.status(500).json({ error: 'Errore durante il cambio password' });
+    }
+});
+// ==========================================
 // 1B. SUPER ADMIN AUTHENTICATION & ROUTES
 // ==========================================
 // Super Admin Login (no tenant required)
@@ -370,11 +596,14 @@ app.post('/api/superadmin/tenants/:id/suspend', authMiddleware_1.authenticateSup
 // Super Admin: Analytics cross-tenant
 app.get('/api/superadmin/analytics', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
     try {
-        const [tenantCount, totalPromotions, totalTokens, totalPlays] = await Promise.all([
+        const [tenantCount, totalPromotions, totalTokens, totalPlays, totalWins, totalCustomers, activePromotions] = await Promise.all([
             prisma.tenant.count(),
             prisma.promotion.count(),
             prisma.token.count(),
-            prisma.play.count()
+            prisma.play.count(),
+            prisma.play.count({ where: { is_winner: true } }),
+            prisma.customer.count(),
+            prisma.promotion.count({ where: { status: 'active' } })
         ]);
         const tenantsByPlan = await prisma.tenant.groupBy({
             by: ['plan'],
@@ -384,13 +613,57 @@ app.get('/api/superadmin/analytics', authMiddleware_1.authenticateSuperAdmin, as
             by: ['licenseStatus'],
             _count: { id: true }
         });
+        // Top 10 tenants by plays
+        const topTenants = await prisma.tenant.findMany({
+            select: {
+                id: true,
+                name: true,
+                slug: true,
+                plan: true,
+                licenseStatus: true,
+                _count: {
+                    select: {
+                        promotions: true
+                    }
+                },
+                promotions: {
+                    select: {
+                        _count: {
+                            select: {
+                                plays: true,
+                                tokens: true
+                            }
+                        }
+                    }
+                }
+            },
+            take: 10
+        });
+        // Calculate plays per tenant
+        const tenantsWithPlays = topTenants.map(t => ({
+            id: t.id,
+            name: t.name,
+            slug: t.slug,
+            plan: t.plan,
+            licenseStatus: t.licenseStatus,
+            promotionCount: t._count.promotions,
+            totalPlays: t.promotions.reduce((sum, p) => sum + p._count.plays, 0),
+            totalTokens: t.promotions.reduce((sum, p) => sum + p._count.tokens, 0)
+        })).sort((a, b) => b.totalPlays - a.totalPlays);
         res.json({
-            tenantCount,
-            totalPromotions,
-            totalTokens,
-            totalPlays,
+            overview: {
+                tenantCount,
+                totalPromotions,
+                activePromotions,
+                totalTokens,
+                totalPlays,
+                totalWins,
+                totalCustomers,
+                winRate: totalPlays > 0 ? ((totalWins / totalPlays) * 100).toFixed(2) : 0
+            },
             tenantsByPlan,
-            tenantsByStatus
+            tenantsByStatus,
+            topTenants: tenantsWithPlays
         });
     }
     catch (err) {
@@ -398,6 +671,184 @@ app.get('/api/superadmin/analytics', authMiddleware_1.authenticateSuperAdmin, as
         res.status(500).json({ error: 'Failed to fetch analytics' });
     }
 });
+// Super Admin: Detailed analytics trends
+app.get('/api/superadmin/analytics/trends', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - days);
+        // Get plays grouped by day
+        const plays = await prisma.play.findMany({
+            where: { created_at: { gte: startDate } },
+            select: {
+                created_at: true,
+                is_winner: true
+            }
+        });
+        // Group by day
+        const dailyStats = {};
+        for (let i = 0; i < days; i++) {
+            const date = new Date();
+            date.setDate(date.getDate() - i);
+            const dateKey = date.toISOString().split('T')[0];
+            dailyStats[dateKey] = { plays: 0, wins: 0 };
+        }
+        plays.forEach(play => {
+            const dateKey = new Date(play.created_at).toISOString().split('T')[0];
+            if (dailyStats[dateKey]) {
+                dailyStats[dateKey].plays++;
+                if (play.is_winner)
+                    dailyStats[dateKey].wins++;
+            }
+        });
+        // Convert to array and sort by date
+        const trends = Object.entries(dailyStats)
+            .map(([date, stats]) => ({ date, ...stats }))
+            .sort((a, b) => a.date.localeCompare(b.date));
+        // Get new tenants in period
+        const newTenants = await prisma.tenant.count({
+            where: { createdAt: { gte: startDate } }
+        });
+        // Get new customers in period
+        const newCustomers = await prisma.customer.count({
+            where: { created_at: { gte: startDate } }
+        });
+        res.json({
+            period: { days, startDate, endDate: new Date() },
+            trends,
+            summary: {
+                totalPlays: plays.length,
+                totalWins: plays.filter(p => p.is_winner).length,
+                newTenants,
+                newCustomers
+            }
+        });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch analytics trends' });
+    }
+});
+// Super Admin: Recent activity across all tenants
+app.get('/api/superadmin/analytics/recent-activity', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        // Recent plays
+        const recentPlays = await prisma.play.findMany({
+            take: limit,
+            orderBy: { created_at: 'desc' },
+            select: {
+                id: true,
+                is_winner: true,
+                created_at: true,
+                customer: {
+                    select: {
+                        first_name: true,
+                        last_name: true
+                    }
+                },
+                promotion: {
+                    select: {
+                        name: true,
+                        tenant: {
+                            select: {
+                                name: true,
+                                slug: true
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        // Recent tenant registrations
+        const recentTenants = await prisma.tenant.findMany({
+            take: 5,
+            orderBy: { createdAt: 'desc' },
+            select: {
+                id: true,
+                name: true,
+                slug: true,
+                plan: true,
+                createdAt: true
+            }
+        });
+        res.json({
+            recentPlays: recentPlays.map(p => ({
+                id: p.id,
+                isWinner: p.is_winner,
+                createdAt: p.created_at,
+                customerName: `${p.customer.first_name} ${p.customer.last_name}`,
+                promotionName: p.promotion.name,
+                tenantName: p.promotion.tenant.name,
+                tenantSlug: p.promotion.tenant.slug
+            })),
+            recentTenants
+        });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch recent activity' });
+    }
+});
+// ==========================================
+// LICENSE NOTIFICATIONS (Cron Job)
+// ==========================================
+// GET Statistiche licenze
+app.get('/api/superadmin/licenses/stats', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    try {
+        const stats = await LicenseNotificationService_1.LicenseNotificationService.getLicenseStats();
+        res.json(stats);
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to get license stats' });
+    }
+});
+// GET Licenze in scadenza
+app.get('/api/superadmin/licenses/expiring', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    try {
+        const expiring = await LicenseNotificationService_1.LicenseNotificationService.getExpiringLicenses();
+        res.json(expiring);
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to get expiring licenses' });
+    }
+});
+// POST Processa notifiche (cron job manuale o schedulato)
+app.post('/api/superadmin/licenses/process-notifications', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    try {
+        const result = await LicenseNotificationService_1.LicenseNotificationService.processNotifications();
+        res.json({
+            success: true,
+            summary: {
+                expiringCount: result.expiring.length,
+                expiredCount: result.expired.length,
+                suspendedCount: result.suspended
+            },
+            details: result
+        });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to process notifications' });
+    }
+});
+// POST Sospendi licenze scadute (cron job)
+app.post('/api/superadmin/licenses/suspend-expired', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    try {
+        const count = await LicenseNotificationService_1.LicenseNotificationService.suspendExpiredLicenses();
+        res.json({
+            success: true,
+            suspendedCount: count
+        });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to suspend expired licenses' });
+    }
+});
+// ==========================================
 // Super Admin: Rinnova licenza
 app.post('/api/superadmin/tenants/:id/renew', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
     const { id } = req.params;
@@ -596,6 +1047,18 @@ app.post('/api/promotions/create', tenantMiddleware_1.resolveTenant, licenseMidd
                 data: codesToCreate
             });
         }
+        // Log audit
+        await AuditService_1.AuditService.log({
+            tenantId: req.tenantId,
+            action: 'CREATE_PROMOTION',
+            entity: 'promotion',
+            entityId: promo.id,
+            details: { name, tokenCount },
+            userId: req.user?.id,
+            userType: req.user?.role,
+            username: req.user?.username,
+            ...AuditService_1.AuditService.extractRequestInfo(req)
+        });
         res.json({
             success: true,
             promotion: promo,
@@ -2383,6 +2846,88 @@ app.put('/api/admin/content/:language?', tenantMiddleware_1.resolveTenant, licen
         res.status(500).json({ error: 'Failed to update content' });
     }
 });
+// POST Upload asset (logo, background, etc.)
+app.post('/api/admin/upload', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+        const { type } = req.body; // 'logo', 'favicon', 'background', 'ogImage'
+        // Build public URL
+        const publicUrl = `/uploads/${req.tenantId}/${req.file.filename}`;
+        // Optionally update branding based on type
+        if (type && ['logoMainUrl', 'logoIconUrl', 'faviconUrl', 'backgroundUrl', 'ogImageUrl'].includes(type)) {
+            await prisma.tenantBranding.upsert({
+                where: { tenantId: req.tenantId },
+                update: { [type]: publicUrl },
+                create: {
+                    tenantId: req.tenantId,
+                    [type]: publicUrl
+                }
+            });
+        }
+        res.json({
+            success: true,
+            url: publicUrl,
+            filename: req.file.filename,
+            size: req.file.size,
+            mimetype: req.file.mimetype
+        });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to upload file' });
+    }
+});
+// GET List uploaded assets for tenant
+app.get('/api/admin/uploads', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    try {
+        const tenantDir = path_1.default.join(UPLOADS_DIR, req.tenantId);
+        if (!fs_1.default.existsSync(tenantDir)) {
+            return res.json({ files: [] });
+        }
+        const files = fs_1.default.readdirSync(tenantDir).map(filename => {
+            const filePath = path_1.default.join(tenantDir, filename);
+            const stats = fs_1.default.statSync(filePath);
+            return {
+                filename,
+                url: `/uploads/${req.tenantId}/${filename}`,
+                size: stats.size,
+                createdAt: stats.birthtime,
+                modifiedAt: stats.mtime
+            };
+        });
+        // Sort by creation date, newest first
+        files.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        res.json({ files });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to list files' });
+    }
+});
+// DELETE Remove uploaded asset
+app.delete('/api/admin/upload/:filename', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    try {
+        const { filename } = req.params;
+        const filePath = path_1.default.join(UPLOADS_DIR, req.tenantId, filename);
+        // Security check: ensure file is within tenant directory
+        if (!filePath.startsWith(path_1.default.join(UPLOADS_DIR, req.tenantId))) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        if (fs_1.default.existsSync(filePath)) {
+            fs_1.default.unlinkSync(filePath);
+            res.json({ success: true });
+        }
+        else {
+            res.status(404).json({ error: 'File not found' });
+        }
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to delete file' });
+    }
+});
 // GET Info tenant pubbliche (per frontend)
 app.get('/api/tenant/info', tenantMiddleware_1.resolveTenant, async (req, res) => {
     if (!req.tenant) {
@@ -2531,6 +3076,95 @@ app.delete('/api/admin/staff/:id', tenantMiddleware_1.resolveTenant, licenseMidd
         res.status(500).json({ error: 'Failed to delete staff user' });
     }
 });
+// POST Genera token reset password per staff user
+app.post('/api/admin/staff/:id/reset-password', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const staffId = parseInt(req.params.id);
+    try {
+        // Verifica che lo staff user appartenga al tenant
+        const staff = await prisma.staffUser.findFirst({
+            where: { id: staffId, tenantId: req.tenantId }
+        });
+        if (!staff) {
+            return res.status(404).json({ error: 'Staff user not found' });
+        }
+        // Genera token reset (valido 24 ore)
+        const resetToken = crypto_1.default.randomBytes(32).toString('hex');
+        const resetTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+        await prisma.staffUser.update({
+            where: { id: staffId },
+            data: { resetToken, resetTokenExpiry }
+        });
+        // In produzione, qui invieremmo un'email. Per ora restituiamo il link
+        res.json({
+            success: true,
+            resetToken,
+            resetLink: `/reset-password?token=${resetToken}`,
+            expiresAt: resetTokenExpiry
+        });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to generate reset token' });
+    }
+});
+// POST Staff usa token per resettare password (no auth required)
+app.post('/api/staff/reset-password', async (req, res) => {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) {
+        return res.status(400).json({ error: 'Token and new password required' });
+    }
+    if (newPassword.length < 8) {
+        return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+    try {
+        // Trova staff user con token valido
+        const staff = await prisma.staffUser.findFirst({
+            where: {
+                resetToken: token,
+                resetTokenExpiry: { gt: new Date() }
+            }
+        });
+        if (!staff) {
+            return res.status(400).json({ error: 'Invalid or expired reset token' });
+        }
+        // Hash nuova password e invalida token
+        const password_hash = await bcrypt_1.default.hash(newPassword, 10);
+        await prisma.staffUser.update({
+            where: { id: staff.id },
+            data: {
+                password_hash,
+                resetToken: null,
+                resetTokenExpiry: null
+            }
+        });
+        res.json({ success: true, message: 'Password reset successfully' });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to reset password' });
+    }
+});
+// GET Verifica validità token reset
+app.get('/api/staff/reset-password/:token', async (req, res) => {
+    const { token } = req.params;
+    try {
+        const staff = await prisma.staffUser.findFirst({
+            where: {
+                resetToken: token,
+                resetTokenExpiry: { gt: new Date() }
+            },
+            select: { username: true }
+        });
+        if (!staff) {
+            return res.status(400).json({ valid: false, error: 'Invalid or expired token' });
+        }
+        res.json({ valid: true, username: staff.username });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to verify token' });
+    }
+});
 // GET Tenant limits info (per mostrare quanti staff rimangono)
 app.get('/api/admin/tenant-limits', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     try {
@@ -2568,6 +3202,65 @@ app.get('/api/admin/tenant-limits', tenantMiddleware_1.resolveTenant, licenseMid
         res.status(500).json({ error: 'Failed to fetch tenant limits' });
     }
 });
+// ==========================================
+// AUDIT LOGS
+// ==========================================
+// GET Lista audit logs (solo admin)
+app.get('/api/admin/audit-logs', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 50;
+        const offset = parseInt(req.query.offset) || 0;
+        const action = req.query.action;
+        const entity = req.query.entity;
+        const startDate = req.query.startDate ? new Date(req.query.startDate) : undefined;
+        const endDate = req.query.endDate ? new Date(req.query.endDate) : undefined;
+        const result = await AuditService_1.AuditService.getLogs(req.tenantId, {
+            limit,
+            offset,
+            action: action,
+            entity: entity,
+            startDate,
+            endDate
+        });
+        res.json(result);
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch audit logs' });
+    }
+});
+// GET Statistiche azioni (solo admin)
+app.get('/api/admin/audit-logs/stats', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    try {
+        const startDate = req.query.startDate ? new Date(req.query.startDate) : undefined;
+        const endDate = req.query.endDate ? new Date(req.query.endDate) : undefined;
+        const stats = await AuditService_1.AuditService.getActionStats(req.tenantId, startDate, endDate);
+        res.json(stats);
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch audit stats' });
+    }
+});
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    // ==========================================
+    // LICENSE NOTIFICATION SCHEDULER
+    // ==========================================
+    // Esegue controllo licenze ogni 24 ore
+    const LICENSE_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
+    const runLicenseCheck = async () => {
+        console.log('[SCHEDULER] Running daily license check...');
+        try {
+            const result = await LicenseNotificationService_1.LicenseNotificationService.processNotifications();
+            console.log(`[SCHEDULER] License check complete: ${result.expiring.length} expiring, ${result.suspended} suspended`);
+        }
+        catch (err) {
+            console.error('[SCHEDULER] License check failed:', err);
+        }
+    };
+    // Esegui al primo avvio (dopo 10 secondi per permettere al DB di inizializzarsi)
+    setTimeout(runLicenseCheck, 10000);
+    // Poi ogni 24 ore
+    setInterval(runLicenseCheck, LICENSE_CHECK_INTERVAL);
 });
