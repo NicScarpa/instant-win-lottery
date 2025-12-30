@@ -1,0 +1,312 @@
+================================================================================
+PROPOSTA MIGLIORAMENTO PROBABILITY ENGINE v2.2
+================================================================================
+Data: 22 Dicembre 2024
+Versione Attuale: 2.1
+Versione Proposta: 2.2
+
+================================================================================
+ANALISI PROBLEMI VERSIONE ATTUALE (v2.1)
+================================================================================
+
+PROBLEMA 1: IL FATIGUE ANNULLA IL BOOST
+---------------------------------------
+Codice attuale (linea 308):
+  const globalModifier = fatigue * pacing;
+
+Anche con boost 10x nell'ultimo minuto, il fatigue riduce drasticamente l'effetto:
+- Giocatore con 1 vittoria: fatigue = 0.8 -> 10x * 0.8 = 8x effettivo
+- Giocatore con 2 vittorie: fatigue = 0.6 -> 10x * 0.6 = 6x effettivo
+- Giocatore con 3 vittorie: fatigue = 0.4 -> 10x * 0.4 = 4x effettivo
+- Giocatore frequente (20 giocate, 3 vittorie): fatigue = 0.1 -> 10x * 0.1 = 1x (NESSUN BOOST!)
+
+IMPATTO: Se nell'ultima fase ci sono principalmente giocatori frequenti, il boost
+viene completamente annullato e i premi non vengono distribuiti.
+
+
+PROBLEMA 2: BOOST TROPPO CONSERVATIVO IN FASE 2 (1 ora -> 5 min)
+----------------------------------------------------------------
+Codice attuale (linee 176-183):
+  if (margin > 3) {
+    return 1.3;   // Solo +30%!
+  } else if (margin > 2) {
+    return 1.15;  // Solo +15%!
+  }
+  return 1.0;
+
+Se i premi durerebbero 3x piu' del tempo rimanente, applichiamo solo +30%.
+Questo e' insufficiente per esaurire un surplus significativo di premi.
+
+ESEMPIO:
+- Tempo rimanente: 30 minuti
+- Premi rimanenti: 50
+- Rate storico: 2 premi/ora
+- Stima esaurimento: 25 ore
+- Margin: 25h / 0.5h = 50x
+- Boost applicato: solo 1.3x (INSUFFICIENTE!)
+
+
+PROBLEMA 3: CAP TROPPO BASSO IN FASE 3 (5 min -> 1 min)
+-------------------------------------------------------
+Codice attuale (linea 209):
+  return Math.max(1.5, Math.min(5.0, boostNeeded));
+
+Il boost massimo e' 5x, ma dopo fatigue:
+- Con fatigue 0.8: 5x * 0.8 = 4x
+- Con fatigue 0.4: 5x * 0.4 = 2x
+- Con fatigue 0.1: 5x * 0.1 = 0.5x (PEGGIO DI NESSUN BOOST!)
+
+
+PROBLEMA 4: NESSUNA GARANZIA DI DISTRIBUZIONE
+---------------------------------------------
+L'algoritmo e' puramente probabilistico. Anche con probabilita' alta,
+l'estrazione casuale puo' non assegnare premi.
+
+ESEMPIO:
+- Probabilita' effettiva: 80%
+- 10 giocate negli ultimi minuti
+- Valore atteso: 8 vincite
+- Ma potrebbe essere 5, 6, o anche meno per pura sfortuna
+
+
+PROBLEMA 5: STIMA BASATA SU RATE STORICO ERRATO
+-----------------------------------------------
+Codice attuale (linee 156-162):
+  const currentPrizeRate = prizesAssigned / timeElapsed;
+  const estimatedTimeToEmpty = prizesRemaining / currentPrizeRate;
+
+Se durante la promozione sono stati assegnati pochi premi (per fatigue alto
+o bassa partecipazione), l'algoritmo assume che questo rate basso continuera',
+e quindi applica boost conservativi.
+
+ESEMPIO:
+- Promozione 8 ore, assegnati solo 10 premi su 100
+- Rate storico: 1.25 premi/ora
+- Premi rimanenti: 90
+- Stima esaurimento: 72 ore
+- L'algoritmo pensa "c'e' tempo" e non boosta abbastanza
+
+
+================================================================================
+PROPOSTA MIGLIORAMENTI v2.2
+================================================================================
+
+MIGLIORAMENTO 1: "DESPERATION MODE" - IGNORA FATIGUE NEGLI ULTIMI MINUTI
+------------------------------------------------------------------------
+Negli ultimi 5 minuti, il fatigue viene progressivamente ignorato:
+- 5 min -> 2 min: fatigue applicato al 50%
+- 2 min -> 1 min: fatigue applicato al 25%
+- < 1 min: fatigue completamente ignorato
+
+Codice proposto:
+  function getEffectiveFatigue(fatigue: number, timeRemaining: number): number {
+    if (timeRemaining > FIVE_MINUTES_MS) return fatigue;
+    if (timeRemaining > TWO_MINUTES_MS) return 1 - (1 - fatigue) * 0.5;
+    if (timeRemaining > ONE_MINUTE_MS) return 1 - (1 - fatigue) * 0.25;
+    return 1.0; // Ignora fatigue completamente
+  }
+
+
+MIGLIORAMENTO 2: BOOST PIU' AGGRESSIVI
+--------------------------------------
+Nuovi valori di boost per fase:
+
+FASE 2 (1 ora -> 5 min) - "Accelerazione":
+  - Margin > 5: boost 3.0x (era 1.3x)
+  - Margin > 3: boost 2.0x (era 1.3x)
+  - Margin > 2: boost 1.5x (era 1.15x)
+  - Margin > 1.5: boost 1.2x (nuovo)
+
+FASE 3 (5 min -> 1 min) - "Distribuzione Aggressiva":
+  - Boost minimo: 3.0x (era 1.5x)
+  - Boost massimo: 15.0x (era 5.0x)
+  - Calcolo dinamico basato su premi_rimasti / giocate_attese
+
+FASE 4 (< 1 min) - "Massima Urgenza":
+  - Boost: 50.0x (era 10.0x)
+  - Oppure: Force Win attivo
+
+
+MIGLIORAMENTO 3: "FORCE WIN" OPZIONALE
+--------------------------------------
+Parametro configurabile per forzare vincita garantita:
+
+  forceWinEnabled: boolean (default: true)
+  forceWinThresholdMinutes: number (default: 1)
+
+Se attivo e siamo sotto la soglia temporale con premi rimanenti:
+  - Probabilita' = 100% (ignora tutti i fattori)
+  - Assegna premio casuale tra quelli disponibili
+
+Codice proposto:
+  if (forceWinEnabled && timeRemaining < forceWinThresholdMinutes * 60000) {
+    if (prizesRemaining > 0 && eligiblePrizes.length > 0) {
+      // Forza vincita
+      const randomPrize = eligiblePrizes[Math.floor(Math.random() * eligiblePrizes.length)];
+      return { winner: true, prize: randomPrize, factors: { forced: true } };
+    }
+  }
+
+
+MIGLIORAMENTO 4: CALCOLO BOOST BASATO SU TARGET, NON SU STORICO
+---------------------------------------------------------------
+Invece di stimare basandosi sul rate storico, calcolare il boost necessario
+per raggiungere l'obiettivo di esaurimento:
+
+  // Giocate attese nel tempo rimanente (stima conservativa)
+  const estimatedPlays = Math.max(10, playsPerMs * timeRemaining);
+
+  // Win rate necessario per esaurire premi
+  const targetWinRate = prizesRemaining / estimatedPlays;
+
+  // Win rate base attuale
+  const baseWinRate = prizesRemaining / tokensRemaining;
+
+  // Boost necessario (senza cap artificiali bassi)
+  const requiredBoost = targetWinRate / baseWinRate;
+
+  // Cap ragionevole ma alto
+  return Math.min(requiredBoost, 50.0);
+
+
+MIGLIORAMENTO 5: LOGGING DIAGNOSTICO
+------------------------------------
+Aggiungere logging dettagliato per debug:
+
+  interface EngineDebugInfo {
+    timestamp: Date;
+    phase: 'normal' | 'conservation' | 'distribution' | 'final' | 'forced';
+    timeRemaining: number;
+    prizesRemaining: number;
+    tokensRemaining: number;
+    rawFatigue: number;
+    effectiveFatigue: number;
+    timePressure: number;
+    finalModifier: number;
+    winProbability: number;
+    outcome: 'win' | 'loss';
+  }
+
+Salvare in tabella separata per analisi post-promozione.
+
+
+================================================================================
+NUOVA LOGICA PROPOSTA - RIEPILOGO
+================================================================================
+
+determineOutcome(input):
+
+  1. Calcola fatigue base (come prima)
+
+  2. Calcola time pressure con nuovi valori:
+     - > 1 ora: pacing standard
+     - 1 ora -> 5 min: boost fino a 3x (era 1.3x)
+     - 5 min -> 1 min: boost fino a 15x (era 5x)
+     - < 1 min: boost 50x o Force Win
+
+  3. Applica "Desperation Mode":
+     - < 5 min: fatigue ridotto progressivamente
+     - < 1 min: fatigue ignorato
+
+  4. Calcola probabilita':
+     - Se Force Win attivo e < 1 min: probabilita' = 100%
+     - Altrimenti: baseProbability * timePressure * effectiveFatigue
+
+  5. Estrazione casuale (come prima)
+
+
+================================================================================
+CONFRONTO SCENARI
+================================================================================
+
+SCENARIO: Ultimo minuto, 20 premi rimasti, giocatore con 3 vittorie
+
+VERSIONE 2.1 (attuale):
+  - Fatigue: 0.4
+  - Time Pressure: 10x
+  - Final Modifier: 10 * 0.4 = 4x
+  - Base probability: ~10%
+  - Effective probability: ~40%
+  - RISULTATO: 60% chance di NON vincere
+
+VERSIONE 2.2 (proposta con Force Win):
+  - Force Win attivo
+  - RISULTATO: 100% chance di vincere
+
+
+SCENARIO: 3 minuti rimanenti, 30 premi rimasti, giocatore con 2 vittorie
+
+VERSIONE 2.1:
+  - Fatigue: 0.6
+  - Time Pressure: max 5x
+  - Final Modifier: 5 * 0.6 = 3x
+  - Effective probability: ~30%
+
+VERSIONE 2.2:
+  - Fatigue effettivo: 1 - (1-0.6)*0.25 = 0.9
+  - Time Pressure: fino a 15x
+  - Final Modifier: 15 * 0.9 = 13.5x
+  - Effective probability: ~100% (capped)
+
+
+================================================================================
+PARAMETRI CONFIGURABILI PROPOSTI
+================================================================================
+
+interface EngineConfig {
+  // Desperation Mode
+  desperationModeEnabled: boolean;        // default: true
+  desperationStartMinutes: number;        // default: 5
+
+  // Force Win
+  forceWinEnabled: boolean;               // default: true
+  forceWinThresholdMinutes: number;       // default: 1
+
+  // Boost Caps
+  phase2MaxBoost: number;                 // default: 3.0
+  phase3MaxBoost: number;                 // default: 15.0
+  phase4MaxBoost: number;                 // default: 50.0
+
+  // Logging
+  debugLoggingEnabled: boolean;           // default: false
+}
+
+
+================================================================================
+PRIORITA' IMPLEMENTAZIONE
+================================================================================
+
+FASE 1 (Critica):
+- Force Win nell'ultimo minuto
+- Aumento cap boost Fase 3 e 4
+
+FASE 2 (Alta):
+- Desperation Mode (riduzione fatigue)
+- Aumento boost Fase 2
+
+FASE 3 (Media):
+- Logging diagnostico
+- Parametri configurabili da admin panel
+
+
+================================================================================
+RISCHI E CONSIDERAZIONI
+================================================================================
+
+1. EQUITA': Force Win potrebbe sembrare "ingiusto" per chi ha giocato prima.
+   MITIGAZIONE: Applicare solo se necessario per esaurire premi.
+
+2. ABUSO: Giocatori potrebbero aspettare l'ultimo minuto per giocare.
+   MITIGAZIONE: Non pubblicizzare la meccanica, mantenere fatigue attivo
+   per vittorie precedenti nella stessa promozione.
+
+3. GENDER RESTRICTION: Con Force Win, assicurarsi che i premi con restrizione
+   di genere vengano comunque rispettati.
+
+4. STOCK NEGATIVO: Verificare che non si assegnino piu' premi del disponibile
+   in caso di giocate simultanee nell'ultimo minuto.
+
+
+================================================================================
+FINE DOCUMENTO
+================================================================================

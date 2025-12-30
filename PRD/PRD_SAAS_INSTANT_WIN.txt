@@ -1,0 +1,1146 @@
+================================================================================
+                    PRODUCT REQUIREMENTS DOCUMENT (PRD)
+                    INSTANT WIN PLATFORM - SAAS TRANSFORMATION
+================================================================================
+
+Documento:       PRD_SAAS_INSTANT_WIN
+Versione:        1.0
+Data:            22 Dicembre 2024
+Autore:          [Da definire]
+Status:          DRAFT - In attesa di approvazione
+
+================================================================================
+                              EXECUTIVE SUMMARY
+================================================================================
+
+OBIETTIVO
+---------
+Trasformare l'applicazione "Campari Lottery" da soluzione single-tenant
+personalizzata in una piattaforma SaaS multi-tenant commercializzabile,
+permettendo a brand del settore food & beverage di attivare campagne di
+instant win per i propri eventi.
+
+PROPOSTA DI VALORE
+------------------
+- Lotteria istantanea chiavi in mano per eventi
+- Nessuna competenza tecnica richiesta al cliente
+- Setup in 24-48 ore
+- Sistema probabilistico avanzato con distribuzione intelligente premi
+- Dashboard analytics in tempo reale
+- Supporto per premi gender-specific
+
+TARGET MARKET
+-------------
+- Brand beverage (Campari, Aperol, Peroni, etc.)
+- Organizzatori eventi F&B
+- Catene di locali/bar
+- Agenzie eventi e marketing
+
+================================================================================
+                           STATO ATTUALE DEL SOFTWARE
+================================================================================
+
+ARCHITETTURA CORRENTE
+---------------------
+
+┌─────────────────────────────────────────────────────────────┐
+│                    INFRASTRUTTURA ATTUALE                    │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│   Frontend (Vercel)          Backend (Railway)               │
+│   camparinoweek.com          api.camparinoweek.com          │
+│        │                            │                        │
+│        └────────────┬───────────────┘                        │
+│                     │                                        │
+│              PostgreSQL (Railway)                            │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+
+STACK TECNOLOGICO
+-----------------
+Frontend:
+  - Next.js 16.0.10 (React 19.2.1)
+  - Tailwind CSS 4
+  - TypeScript
+  - Recharts (grafici)
+  - Lucide React (icone)
+
+Backend:
+  - Node.js + Express.js
+  - Prisma ORM
+  - PostgreSQL (produzione) / SQLite (sviluppo)
+  - JWT Authentication
+  - PDFKit (generazione token)
+
+Hosting:
+  - Frontend: Vercel (auto-deploy da GitHub)
+  - Backend: Railway
+  - Database: Railway PostgreSQL
+
+
+SCHEMA DATABASE ATTUALE
+-----------------------
+
+TABELLE PRINCIPALI:
+
+1. Promotion (configurazione campagna)
+   - id, name, description
+   - start_datetime, end_datetime
+   - status (DRAFT/ACTIVE/CLOSED)
+   - planned_token_count
+   - leaderboard_active, leaderboard_size
+   - terms_url, privacy_url
+
+2. PrizeType (tipi di premi)
+   - id, promotion_id (FK)
+   - name, description
+   - initial_stock, remaining_stock
+   - target_overall_probability
+   - gender_restriction ('F'|'M'|null)
+
+3. Token (codici di accesso)
+   - id, promotion_id (FK)
+   - token_code (UNIQUE, hex 8 caratteri)
+   - status ('available'|'used'|'invalid')
+   - batch_id, created_at, used_at
+
+4. Customer (giocatori)
+   - id, promotion_id (FK)
+   - first_name, last_name, phone_number
+   - total_plays, total_wins
+   - detected_gender ('F'|'M'|'U')
+   - consent_marketing, consent_terms
+   - UNIQUE: (promotion_id, phone_number)
+
+5. Play (giocate)
+   - id, promotion_id (FK)
+   - token_id (FK, UNIQUE)
+   - customer_id (FK)
+   - is_winner, created_at
+
+6. PrizeAssignment (premi assegnati)
+   - id, promotion_id (FK)
+   - prize_type_id (FK), customer_id (FK)
+   - token_id (FK), play_id (FK)
+   - prize_code (UNIQUE, formato: WIN-TOKEN-TIMESTAMP)
+   - assigned_at, redeemed_at
+   - redeemed_by_staff_id (FK)
+
+7. StaffUser (operatori)
+   - id, username, password_hash
+   - role ('staff'|'admin')
+
+8. FinalLeaderboard (snapshot classifica)
+   - id, promotion_id (FK)
+   - customer_id (FK), rank, total_plays
+
+
+SISTEMA DI AUTENTICAZIONE ATTUALE
+---------------------------------
+
+Due flussi JWT separati:
+
+A) Admin/Staff JWT (8 ore validita'):
+   - Login: POST /api/auth/login
+   - Payload: { id, username, role }
+   - Storage: localStorage + httpOnly cookie
+   - Refresh: grace period 7 giorni
+
+B) Customer JWT (30 giorni validita'):
+   - Creato dopo registrazione
+   - Payload: { customerId, promotionId, phoneNumber }
+   - Usato per rate limiting giocate
+
+
+PROBABILITY ENGINE v2.1
+-----------------------
+
+Sistema probabilistico con 4 fattori:
+
+1. FATIGUE FACTOR
+   - Penalizza giocatori frequenti (-10% ogni 2 giocate oltre 6)
+   - Penalizza vincitori multipli (-20% per vittoria)
+   - Floor: 10% probabilita' minima
+
+2. PACING FACTOR
+   - Mantiene distribuzione uniforme token/premi
+   - Rallenta se troppi premi distribuiti
+   - Accelera se in ritardo
+
+3. TIME PRESSURE FACTOR
+   - 4 fasi temporali
+   - Boost fino a 10x negli ultimi minuti
+   - Garantisce svuotamento premi
+
+4. GENDER FILTER
+   - Premi possono essere M/F/tutti
+   - Rilevamento genere da nome (euristiche italiane)
+
+
+BRANDING ATTUALE (Hardcoded)
+----------------------------
+
+Colori CSS variables:
+  --campari: #b42a28
+  --background: #f3efe6
+  --dark: #2d2d2d
+
+Assets fissi:
+  - Logo Campari
+  - Template PDF token
+  - Immagini background
+
+
+LIMITAZIONI ATTUALI PER SAAS
+----------------------------
+
+1. Single-tenant: un'istanza = un cliente
+2. Branding hardcoded nel codice
+3. Nessuna gestione multi-cliente
+4. Nessun sistema di licensing/billing
+5. Database condiviso senza isolamento
+6. URL/domini fissi
+7. Staff users globali (non per tenant)
+
+================================================================================
+                         ARCHITETTURA TARGET SAAS
+================================================================================
+
+MODELLO MULTI-TENANT PROPOSTO
+-----------------------------
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         PIATTAFORMA SAAS                                     │
+│                      (es. instantwin.io)                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
+│  │  CAMPARI   │  │   APEROL   │  │   PERONI   │  │  TENANT N  │            │
+│  │  Tenant 1  │  │  Tenant 2  │  │  Tenant 3  │  │            │            │
+│  │            │  │            │  │            │  │            │            │
+│  │ campari.   │  │ aperol.    │  │ peroni.    │  │ custom.    │            │
+│  │ instantwin │  │ instantwin │  │ instantwin │  │ instantwin │            │
+│  │ .io        │  │ .io        │  │ .io        │  │ .io        │            │
+│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘            │
+│        │               │               │               │                    │
+│        └───────────────┴───────┬───────┴───────────────┘                    │
+│                                │                                             │
+│                    ┌───────────▼───────────┐                                │
+│                    │      SHARED INFRA     │                                │
+│                    │  ┌─────────────────┐  │                                │
+│                    │  │  Single Backend │  │                                │
+│                    │  │  Multi-Tenant   │  │                                │
+│                    │  └────────┬────────┘  │                                │
+│                    │           │           │                                │
+│                    │  ┌────────▼────────┐  │                                │
+│                    │  │   PostgreSQL    │  │                                │
+│                    │  │  (tenant_id in  │  │                                │
+│                    │  │   ogni tabella) │  │                                │
+│                    │  └─────────────────┘  │                                │
+│                    └───────────────────────┘                                │
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                    SUPER ADMIN PANEL (TUO)                            │  │
+│  │                                                                        │  │
+│  │  • Gestione Tenant (CRUD)                                             │  │
+│  │  • Attivazione/Sospensione Licenze                                    │  │
+│  │  • Billing & Fatturazione                                             │  │
+│  │  • Analytics Cross-Tenant                                             │  │
+│  │  • Supporto Clienti                                                   │  │
+│  │                                                                        │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+NUOVO SCHEMA DATABASE
+---------------------
+
+NUOVE TABELLE:
+
+1. Tenant (clienti della piattaforma)
+   ┌─────────────────────────────────────────────────────────────┐
+   │ id                  TEXT PRIMARY KEY                        │
+   │ name                TEXT NOT NULL        -- "Campari Group" │
+   │ slug                TEXT UNIQUE NOT NULL -- "campari"       │
+   │                                                              │
+   │ -- Branding                                                  │
+   │ logo_url            TEXT                                     │
+   │ primary_color       TEXT DEFAULT '#b42a28'                   │
+   │ secondary_color     TEXT DEFAULT '#f3efe6'                   │
+   │ accent_color        TEXT DEFAULT '#2d2d2d'                   │
+   │ custom_css          TEXT                 -- CSS override     │
+   │                                                              │
+   │ -- Domini                                                    │
+   │ subdomain           TEXT UNIQUE          -- campari          │
+   │ custom_domain       TEXT                 -- lotteria.campari.com │
+   │                                                              │
+   │ -- Piano & Limiti                                            │
+   │ plan                TEXT DEFAULT 'starter'                   │
+   │ max_promotions      INT DEFAULT 1                            │
+   │ max_tokens_per_promo INT DEFAULT 1000                        │
+   │ max_staff_users     INT DEFAULT 5                            │
+   │                                                              │
+   │ -- Licenza                                                   │
+   │ license_key         TEXT UNIQUE                              │
+   │ license_status      TEXT DEFAULT 'trial'                     │
+   │                     -- trial|active|suspended|expired        │
+   │ license_start       TIMESTAMP                                │
+   │ license_end         TIMESTAMP                                │
+   │                                                              │
+   │ -- Contatti                                                  │
+   │ admin_email         TEXT NOT NULL                            │
+   │ admin_phone         TEXT                                     │
+   │ billing_email       TEXT                                     │
+   │ company_name        TEXT                                     │
+   │ vat_number          TEXT                                     │
+   │                                                              │
+   │ -- Metadata                                                  │
+   │ created_at          TIMESTAMP DEFAULT NOW()                  │
+   │ updated_at          TIMESTAMP DEFAULT NOW()                  │
+   └─────────────────────────────────────────────────────────────┘
+
+2. Activation (attivazioni/acquisti)
+   ┌─────────────────────────────────────────────────────────────┐
+   │ id                  TEXT PRIMARY KEY                        │
+   │ tenant_id           TEXT REFERENCES Tenant(id)              │
+   │ promotion_id        TEXT REFERENCES Promotion(id)           │
+   │                                                              │
+   │ -- Tipo Attivazione                                          │
+   │ type                TEXT NOT NULL                            │
+   │                     -- 'event_single'|'event_multi'|         │
+   │                     -- 'monthly'|'annual'                    │
+   │                                                              │
+   │ -- Quantita'                                                 │
+   │ tokens_purchased    INT NOT NULL                             │
+   │ promotions_included INT DEFAULT 1                            │
+   │                                                              │
+   │ -- Pricing                                                   │
+   │ unit_price          DECIMAL(10,2)                            │
+   │ total_amount        DECIMAL(10,2) NOT NULL                   │
+   │ currency            TEXT DEFAULT 'EUR'                       │
+   │ discount_code       TEXT                                     │
+   │ discount_amount     DECIMAL(10,2) DEFAULT 0                  │
+   │                                                              │
+   │ -- Pagamento                                                 │
+   │ payment_status      TEXT DEFAULT 'pending'                   │
+   │                     -- pending|paid|failed|refunded          │
+   │ payment_method      TEXT                                     │
+   │                     -- invoice|stripe|bank_transfer          │
+   │ payment_date        TIMESTAMP                                │
+   │ invoice_number      TEXT                                     │
+   │ invoice_url         TEXT                                     │
+   │                                                              │
+   │ -- Validita'                                                 │
+   │ activated_at        TIMESTAMP                                │
+   │ expires_at          TIMESTAMP                                │
+   │                                                              │
+   │ -- Note                                                      │
+   │ notes               TEXT                                     │
+   │ created_at          TIMESTAMP DEFAULT NOW()                  │
+   └─────────────────────────────────────────────────────────────┘
+
+3. SuperAdmin (gestori piattaforma)
+   ┌─────────────────────────────────────────────────────────────┐
+   │ id                  TEXT PRIMARY KEY                        │
+   │ email               TEXT UNIQUE NOT NULL                    │
+   │ password_hash       TEXT NOT NULL                           │
+   │ name                TEXT                                     │
+   │ role                TEXT DEFAULT 'admin'                     │
+   │                     -- superadmin|admin|support|billing      │
+   │ last_login          TIMESTAMP                                │
+   │ created_at          TIMESTAMP DEFAULT NOW()                  │
+   └─────────────────────────────────────────────────────────────┘
+
+4. TenantAsset (assets personalizzati)
+   ┌─────────────────────────────────────────────────────────────┐
+   │ id                  TEXT PRIMARY KEY                        │
+   │ tenant_id           TEXT REFERENCES Tenant(id)              │
+   │ type                TEXT NOT NULL                            │
+   │                     -- logo|background|token_template|       │
+   │                     -- favicon|og_image                      │
+   │ url                 TEXT NOT NULL                            │
+   │ created_at          TIMESTAMP DEFAULT NOW()                  │
+   └─────────────────────────────────────────────────────────────┘
+
+
+MODIFICHE TABELLE ESISTENTI:
+
+Aggiungere tenant_id a TUTTE le tabelle esistenti:
+
+  ALTER TABLE Promotion ADD COLUMN tenant_id TEXT REFERENCES Tenant(id);
+  ALTER TABLE PrizeType ADD COLUMN tenant_id TEXT REFERENCES Tenant(id);
+  ALTER TABLE Token ADD COLUMN tenant_id TEXT REFERENCES Tenant(id);
+  ALTER TABLE Customer ADD COLUMN tenant_id TEXT REFERENCES Tenant(id);
+  ALTER TABLE Play ADD COLUMN tenant_id TEXT REFERENCES Tenant(id);
+  ALTER TABLE PrizeAssignment ADD COLUMN tenant_id TEXT REFERENCES Tenant(id);
+  ALTER TABLE StaffUser ADD COLUMN tenant_id TEXT REFERENCES Tenant(id);
+  ALTER TABLE FinalLeaderboard ADD COLUMN tenant_id TEXT REFERENCES Tenant(id);
+
+Creare INDICI per performance:
+
+  CREATE INDEX idx_promotion_tenant ON Promotion(tenant_id);
+  CREATE INDEX idx_token_tenant ON Token(tenant_id);
+  CREATE INDEX idx_customer_tenant ON Customer(tenant_id);
+  CREATE INDEX idx_play_tenant ON Play(tenant_id);
+  -- etc.
+
+
+================================================================================
+                            MODELLO DI BUSINESS
+================================================================================
+
+PRICING STRATEGY
+----------------
+
+OPZIONE 1: PAY-PER-EVENT (Consigliata per target iniziale)
+----------------------------------------------------------
+
+┌──────────────────┬───────────┬────────────┬─────────────────────────────────┐
+│ PIANO            │ PREZZO    │ TOKEN      │ FEATURES                        │
+├──────────────────┼───────────┼────────────┼─────────────────────────────────┤
+│ Event Starter    │ €299      │ 500        │ 1 promozione                    │
+│                  │           │            │ 3 tipi premio                   │
+│                  │           │            │ Analytics base                  │
+│                  │           │            │ Branding BASE:                  │
+│                  │           │            │   - Solo colori (3)             │
+│                  │           │            │   - Logo principale             │
+│                  │           │            │ 2 staff users                   │
+│                  │           │            │ Supporto email                  │
+│                  │           │            │ Leaderboard: NO (add-on +€49)   │
+├──────────────────┼───────────┼────────────┼─────────────────────────────────┤
+│ Event Pro        │ €599      │ 2000       │ 3 promozioni                    │
+│                  │           │            │ Tipi premio illimitati          │
+│                  │           │            │ Analytics avanzate              │
+│                  │           │            │ Branding COMPLETO:              │
+│                  │           │            │   - Colori illimitati           │
+│                  │           │            │   - Font personalizzati         │
+│                  │           │            │   - Testi personalizzabili      │
+│                  │           │            │   - Background custom           │
+│                  │           │            │ 10 staff users                  │
+│                  │           │            │ Supporto prioritario            │
+│                  │           │            │ Export dati CSV                 │
+│                  │           │            │ Leaderboard: INCLUSA            │
+├──────────────────┼───────────┼────────────┼─────────────────────────────────┤
+│ Event Enterprise │ Custom    │ Illimitati │ Promozioni illimitate           │
+│                  │           │            │ Custom domain                   │
+│                  │           │            │ Branding WHITE-LABEL:           │
+│                  │           │            │   - Tutto Pro +                 │
+│                  │           │            │   - CSS custom completo         │
+│                  │           │            │   - Template PDF custom         │
+│                  │           │            │   - Email templates custom      │
+│                  │           │            │   - Multi-lingua                │
+│                  │           │            │ API access                      │
+│                  │           │            │ SLA garantito                   │
+│                  │           │            │ Account manager dedicato        │
+│                  │           │            │ Integrazioni custom             │
+│                  │           │            │ Leaderboard: INCLUSA + custom   │
+└──────────────────┴───────────┴────────────┴─────────────────────────────────┘
+
+ADD-ONS DISPONIBILI (per tutti i piani):
+┌─────────────────────────┬───────────┬────────────────────────────────────────┐
+│ ADD-ON                  │ PREZZO    │ DESCRIZIONE                            │
+├─────────────────────────┼───────────┼────────────────────────────────────────┤
+│ Leaderboard             │ €49       │ Classifica pubblica (solo Starter)     │
+│ Font Custom             │ €29       │ Upload font proprietario               │
+│ Multi-lingua            │ €99       │ Supporto lingue aggiuntive             │
+│ Template PDF Premium    │ €79       │ Design PDF token personalizzato        │
+│ Analytics Extended      │ €49       │ Report avanzati + export               │
+└─────────────────────────┴───────────┴────────────────────────────────────────┘
+
+Token Aggiuntivi: €0.20-0.30/token (volume discount)
+
+
+OPZIONE 2: SUBSCRIPTION MONTHLY (Per clienti ricorrenti)
+--------------------------------------------------------
+
+┌──────────────────┬───────────┬────────────┬─────────────────────────────────┐
+│ PIANO            │ PREZZO/M  │ TOKEN/M    │ FEATURES                        │
+├──────────────────┼───────────┼────────────┼─────────────────────────────────┤
+│ Starter          │ €199/mese │ 1000       │ 1 promozione attiva             │
+│ Professional     │ €499/mese │ 5000       │ 5 promozioni attive             │
+│ Business         │ €999/mese │ 15000      │ Promozioni illimitate           │
+└──────────────────┴───────────┴────────────┴─────────────────────────────────┘
+
+
+REVENUE PROJECTIONS (Anno 1)
+----------------------------
+
+Scenario Conservativo:
+  - 10 clienti Event Starter: €2,990
+  - 5 clienti Event Pro: €2,995
+  - 2 clienti Enterprise: €4,000
+  - Token aggiuntivi: €1,500
+  TOTALE ANNO 1: ~€11,500
+
+Scenario Ottimistico:
+  - 30 clienti Event Starter: €8,970
+  - 15 clienti Event Pro: €8,985
+  - 5 clienti Enterprise: €15,000
+  - Token aggiuntivi: €5,000
+  TOTALE ANNO 1: ~€38,000
+
+
+================================================================================
+                           REQUISITI FUNZIONALI
+================================================================================
+
+RF-001: MULTI-TENANCY
+---------------------
+Priorita': CRITICA
+
+Il sistema deve supportare multipli tenant isolati:
+- Ogni tenant ha i propri dati completamente separati
+- Nessun tenant puo' accedere ai dati di un altro
+- Query automaticamente filtrate per tenant_id
+- Performance non degradate con aumento tenant
+
+RF-002: TENANT RESOLUTION
+-------------------------
+Priorita': CRITICA
+
+Il sistema deve identificare il tenant da:
+- Subdomain: campari.instantwin.io
+- Custom domain: lotteria.campari.com (CNAME)
+- Header custom: X-Tenant-ID (per API)
+
+RF-003: LICENSING SYSTEM
+------------------------
+Priorita': ALTA
+
+Sistema di licenze con:
+- Chiave licenza univoca per tenant
+- Stati: trial (14gg), active, suspended, expired
+- Scadenza automatica con grace period
+- Blocco funzionalita' se expired/suspended
+- Notifiche email pre-scadenza (7gg, 3gg, 1gg)
+
+RF-004: SUPER ADMIN PANEL
+-------------------------
+Priorita': ALTA
+
+Dashboard per gestione piattaforma:
+- CRUD completo tenant
+- Attivazione/sospensione licenze
+- Visualizzazione revenue
+- Analytics cross-tenant
+- Impersonation (login come tenant per supporto)
+- Audit log azioni
+
+RF-005: BRANDING AVANZATO & WHITE-LABELING
+------------------------------------------
+Priorita': ALTA
+
+Sistema completo di personalizzazione brand per ogni tenant:
+
+A) IDENTITA' VISIVA
+   - Logo principale (header, PDF token, email)
+   - Logo secondario/icona (favicon, app icon)
+   - Colori brand:
+     * Primario (es. #b42a28 per Campari)
+     * Secondario (background, sfumature)
+     * Accent (CTA, highlights)
+     * Testo (dark, light, muted)
+   - Background images (landing page, thank you page)
+   - Pattern/texture opzionali
+
+B) TIPOGRAFIA
+   - Font principale (heading) - Google Fonts o custom upload
+   - Font secondario (body text)
+   - Font size scale (base, sm, lg, xl)
+   - Line height e letter spacing
+
+C) CONTENUTI TESTUALI PERSONALIZZABILI
+   Landing Page:
+   - Titolo principale (es. "Tenta la fortuna!")
+   - Sottotitolo/descrizione
+   - Testo CTA button (es. "Gioca Ora", "Partecipa")
+   - Placeholder campo token
+   - Messaggio errore token invalido
+   - Messaggio errore token già usato
+
+   Form Registrazione:
+   - Titolo form
+   - Label campi (Nome, Cognome, Telefono)
+   - Testo consensi (privacy, marketing)
+   - Testo button submit
+
+   Pagina Risultato:
+   - Messaggio vincita (es. "Congratulazioni! Hai vinto...")
+   - Messaggio non vincita (es. "Peccato! Ritenta...")
+   - Istruzioni ritiro premio
+   - Messaggio ringraziamento
+
+   Footer:
+   - Testo copyright
+   - Link termini e condizioni
+   - Link privacy policy
+   - Contatti supporto
+
+D) TEMPLATE PDF TOKEN
+   - Logo brand posizionabile
+   - Colori sfondo e bordi
+   - Font personalizzato
+   - Testo istruzioni custom
+   - QR code style
+
+E) EMAIL TEMPLATES (futuro)
+   - Template conferma registrazione
+   - Template vincita
+   - Template reminder
+
+NUOVA TABELLA: TenantBranding
+┌─────────────────────────────────────────────────────────────┐
+│ id                  TEXT PRIMARY KEY                        │
+│ tenant_id           TEXT REFERENCES Tenant(id) UNIQUE       │
+│                                                              │
+│ -- Colori                                                    │
+│ color_primary       TEXT DEFAULT '#b42a28'                   │
+│ color_secondary     TEXT DEFAULT '#f3efe6'                   │
+│ color_accent        TEXT DEFAULT '#2d2d2d'                   │
+│ color_text_dark     TEXT DEFAULT '#1a1a1a'                   │
+│ color_text_light    TEXT DEFAULT '#ffffff'                   │
+│ color_text_muted    TEXT DEFAULT '#6b7280'                   │
+│ color_success       TEXT DEFAULT '#22c55e'                   │
+│ color_error         TEXT DEFAULT '#ef4444'                   │
+│                                                              │
+│ -- Font                                                      │
+│ font_heading        TEXT DEFAULT 'Inter'                     │
+│ font_body           TEXT DEFAULT 'Inter'                     │
+│ font_heading_url    TEXT  -- Google Fonts URL o custom       │
+│ font_body_url       TEXT                                     │
+│                                                              │
+│ -- Assets URLs                                               │
+│ logo_main_url       TEXT                                     │
+│ logo_icon_url       TEXT                                     │
+│ favicon_url         TEXT                                     │
+│ background_url      TEXT                                     │
+│ og_image_url        TEXT  -- Open Graph per social           │
+│                                                              │
+│ -- CSS Custom                                                │
+│ custom_css          TEXT  -- Override CSS avanzato           │
+│                                                              │
+│ updated_at          TIMESTAMP DEFAULT NOW()                  │
+└─────────────────────────────────────────────────────────────┘
+
+NUOVA TABELLA: TenantContent
+┌─────────────────────────────────────────────────────────────┐
+│ id                  TEXT PRIMARY KEY                        │
+│ tenant_id           TEXT REFERENCES Tenant(id)              │
+│ language            TEXT DEFAULT 'it'  -- it, en, es, etc.  │
+│                                                              │
+│ -- Landing Page                                              │
+│ landing_title       TEXT DEFAULT 'Tenta la fortuna!'        │
+│ landing_subtitle    TEXT                                     │
+│ landing_cta_text    TEXT DEFAULT 'Gioca Ora'                │
+│ token_placeholder   TEXT DEFAULT 'Inserisci il tuo codice' │
+│ error_invalid_token TEXT DEFAULT 'Codice non valido'        │
+│ error_used_token    TEXT DEFAULT 'Codice già utilizzato'    │
+│                                                              │
+│ -- Form                                                      │
+│ form_title          TEXT DEFAULT 'Completa la registrazione'│
+│ label_first_name    TEXT DEFAULT 'Nome'                     │
+│ label_last_name     TEXT DEFAULT 'Cognome'                  │
+│ label_phone         TEXT DEFAULT 'Numero di telefono'       │
+│ consent_privacy     TEXT                                     │
+│ consent_marketing   TEXT                                     │
+│ form_submit_text    TEXT DEFAULT 'Partecipa'                │
+│                                                              │
+│ -- Risultati                                                 │
+│ win_title           TEXT DEFAULT 'Congratulazioni!'         │
+│ win_message         TEXT DEFAULT 'Hai vinto: {prize_name}'  │
+│ win_instructions    TEXT                                     │
+│ lose_title          TEXT DEFAULT 'Peccato!'                 │
+│ lose_message        TEXT DEFAULT 'Non hai vinto, ritenta!'  │
+│ thank_you_message   TEXT                                     │
+│                                                              │
+│ -- Footer                                                    │
+│ footer_copyright    TEXT                                     │
+│ footer_contact      TEXT                                     │
+│                                                              │
+│ -- Legal URLs                                                │
+│ terms_url           TEXT                                     │
+│ privacy_url         TEXT                                     │
+│                                                              │
+│ UNIQUE(tenant_id, language)                                  │
+└─────────────────────────────────────────────────────────────┘
+
+RF-006: LEADERBOARD COME FEATURE OPZIONALE
+------------------------------------------
+Priorita': MEDIA
+
+La funzione Leaderboard diventa una feature premium attivabile/disattivabile
+per ogni promozione. Non tutti i clienti potrebbero voler mostrare una
+classifica pubblica dei partecipanti.
+
+CONFIGURAZIONE PER PROMOZIONE:
+┌─────────────────────────────────────────────────────────────┐
+│ CAMPO PROMOTION           │ DESCRIZIONE                     │
+├───────────────────────────┼─────────────────────────────────┤
+│ leaderboard_enabled       │ BOOLEAN - Feature attiva/off    │
+│ leaderboard_size          │ INT - Numero posizioni (10-100) │
+│ leaderboard_show_names    │ BOOLEAN - Mostra nomi o anonimi │
+│ leaderboard_show_prizes   │ BOOLEAN - Mostra premi vinti    │
+│ leaderboard_update_freq   │ INT - Aggiornamento in secondi  │
+│ leaderboard_style         │ TEXT - 'minimal'|'full'|'cards' │
+└───────────────────────────┴─────────────────────────────────┘
+
+COMPORTAMENTO:
+- Se leaderboard_enabled = FALSE:
+  * Link "/leaderboard" non visibile
+  * API /api/leaderboard restituisce 404 o messaggio
+  * Nessun ranking calcolato
+
+- Se leaderboard_enabled = TRUE:
+  * Sezione leaderboard visibile su landing page
+  * Pagina dedicata /leaderboard accessibile
+  * Aggiornamento real-time (WebSocket o polling)
+  * Export classifica per admin
+
+OPZIONI VISUALIZZAZIONE:
+- Mostra solo iniziali nome (privacy)
+- Mostra numero giocate
+- Mostra numero vittorie
+- Mostra ultimo premio vinto
+- Animazioni entrata classifica
+
+PRICING:
+- Leaderboard inclusa nei piani Pro ed Enterprise
+- Leaderboard come add-on per piano Starter: +€49/evento
+
+AGGIORNAMENTO TABELLA Promotion:
+  ALTER TABLE Promotion ADD COLUMN leaderboard_enabled BOOLEAN DEFAULT FALSE;
+  ALTER TABLE Promotion ADD COLUMN leaderboard_show_names BOOLEAN DEFAULT TRUE;
+  ALTER TABLE Promotion ADD COLUMN leaderboard_show_prizes BOOLEAN DEFAULT FALSE;
+  ALTER TABLE Promotion ADD COLUMN leaderboard_update_freq INT DEFAULT 30;
+  ALTER TABLE Promotion ADD COLUMN leaderboard_style TEXT DEFAULT 'minimal';
+
+
+RF-007: BILLING & INVOICING
+---------------------------
+Priorita': MEDIA
+
+Gestione pagamenti:
+- Registrazione attivazioni
+- Generazione fatture PDF
+- Integrazione Stripe (opzionale)
+- Export contabile
+- Storico pagamenti per tenant
+
+RF-008: ONBOARDING AUTOMATIZZATO
+--------------------------------
+Priorita': MEDIA
+
+Wizard setup nuovo tenant:
+- Creazione account
+- Configurazione branding base
+- Prima promozione
+- Generazione credenziali staff
+- Email benvenuto con istruzioni
+- Video tutorial integrati
+
+RF-009: LIMITI PER PIANO
+------------------------
+Priorita': ALTA
+
+Enforcement limiti:
+- Max promozioni attive
+- Max token per promozione
+- Max staff users
+- Max tipi premio
+- Blocco soft con upgrade prompt
+
+
+================================================================================
+                          REQUISITI NON FUNZIONALI
+================================================================================
+
+RNF-001: PERFORMANCE
+--------------------
+- Tempo risposta API < 200ms (p95)
+- Supporto 100 richieste/secondo per tenant
+- Generazione PDF < 5 secondi per 1000 token
+
+RNF-002: SCALABILITA'
+---------------------
+- Supporto fino a 100 tenant attivi
+- Database sharding ready (futuro)
+- Horizontal scaling backend
+
+RNF-003: SICUREZZA
+------------------
+- Isolamento dati tenant (row-level security)
+- Encryption at rest
+- HTTPS obbligatorio
+- Rate limiting per tenant
+- Audit logging
+
+RNF-004: DISPONIBILITA'
+-----------------------
+- Uptime 99.5% (SLA base)
+- Uptime 99.9% (SLA enterprise)
+- Backup giornalieri
+- Disaster recovery < 4 ore
+
+RNF-005: COMPLIANCE
+-------------------
+- GDPR compliant
+- Cookie consent per tenant
+- Data retention configurabile
+- Right to deletion
+
+
+================================================================================
+                         PIANO DI IMPLEMENTAZIONE
+================================================================================
+
+FASE 1: FOUNDATION (2-3 settimane)
+----------------------------------
+
+Sprint 1.1: Database Multi-Tenant
+  [ ] Creare tabella Tenant
+  [ ] Creare tabella Activation
+  [ ] Creare tabella SuperAdmin
+  [ ] Aggiungere tenant_id a tutte le tabelle esistenti
+  [ ] Creare migration script
+  [ ] Creare indici per performance
+  [ ] Script migrazione dati Campari esistenti come Tenant #1
+
+Sprint 1.2: Middleware & Auth
+  [ ] Implementare tenantMiddleware (resolution da subdomain/domain)
+  [ ] Modificare authenticateToken per includere tenant context
+  [ ] Creare authenticateSuperAdmin middleware
+  [ ] Modificare tutte le query per filtrare per tenant_id
+  [ ] Test isolamento dati
+
+File da modificare:
+  - backend/prisma/schema.prisma
+  - backend/src/middlewares/authMiddleware.ts (nuovo: tenantMiddleware.ts)
+  - backend/src/server.ts (tutte le route)
+
+
+FASE 2: SUPER ADMIN PANEL (2 settimane)
+---------------------------------------
+
+Sprint 2.1: Backend API SuperAdmin
+  [ ] GET /api/superadmin/tenants (lista)
+  [ ] POST /api/superadmin/tenants (crea)
+  [ ] PUT /api/superadmin/tenants/:id (modifica)
+  [ ] DELETE /api/superadmin/tenants/:id (elimina)
+  [ ] POST /api/superadmin/tenants/:id/activate (attiva licenza)
+  [ ] POST /api/superadmin/tenants/:id/suspend (sospendi)
+  [ ] GET /api/superadmin/analytics (dashboard)
+  [ ] POST /api/superadmin/impersonate/:tenantId (supporto)
+
+Sprint 2.2: Frontend SuperAdmin
+  [ ] Pagina login superadmin (/superadmin/login)
+  [ ] Dashboard overview (/superadmin)
+  [ ] Lista tenant con filtri (/superadmin/tenants)
+  [ ] Dettaglio tenant con azioni (/superadmin/tenants/:id)
+  [ ] Form creazione tenant
+  [ ] Gestione attivazioni
+  [ ] Analytics cross-tenant
+
+Nuovi file:
+  - frontend/app/superadmin/layout.tsx
+  - frontend/app/superadmin/page.tsx
+  - frontend/app/superadmin/tenants/page.tsx
+  - frontend/app/superadmin/tenants/[id]/page.tsx
+  - frontend/app/superadmin/login/page.tsx
+
+
+FASE 3: BRANDING AVANZATO & WHITE-LABELING (2 settimane)
+---------------------------------------------------------
+
+Sprint 3.1: Sistema Theming Base
+  [ ] Creare tabelle TenantBranding e TenantContent
+  [ ] API endpoint GET /api/tenant/branding
+  [ ] API endpoint PUT /api/tenant/branding (admin)
+  [ ] Hook useTenantBranding() per frontend
+  [ ] CSS variables dinamiche da database
+  [ ] Componente ThemeProvider
+  [ ] Color picker nell'admin panel
+
+Sprint 3.2: Font & Assets
+  [ ] Integrazione Google Fonts dinamica
+  [ ] Upload custom fonts (woff2)
+  [ ] Upload logo (principale + icona)
+  [ ] Upload background images
+  [ ] Upload favicon dinamico
+  [ ] Storage assets su Cloudflare R2
+  [ ] Image optimization automatica
+
+Sprint 3.3: Contenuti Personalizzabili
+  [ ] API endpoint GET /api/tenant/content
+  [ ] API endpoint PUT /api/tenant/content
+  [ ] Form modifica testi landing page
+  [ ] Form modifica testi form registrazione
+  [ ] Form modifica messaggi risultato
+  [ ] Preview live modifiche
+  [ ] Supporto multi-lingua (it, en base)
+
+Sprint 3.4: PDF Token Personalizzati
+  [ ] Template PDF configurabile
+  [ ] Logo tenant posizionabile
+  [ ] Colori brand su PDF
+  [ ] Testo istruzioni personalizzabile
+  [ ] Font custom su PDF
+  [ ] QR code con colori brand
+
+File da modificare:
+  - frontend/app/globals.css (CSS variables dinamiche)
+  - frontend/app/layout.tsx (ThemeProvider + font loading)
+  - frontend/app/lib/branding.ts (nuovo)
+  - frontend/app/play/page.tsx (testi dinamici)
+  - backend/src/services/pdfGenerator.ts (template dinamico)
+
+Nuovi file:
+  - frontend/app/admin/branding/page.tsx
+  - frontend/app/admin/branding/components/ColorPicker.tsx
+  - frontend/app/admin/branding/components/FontSelector.tsx
+  - frontend/app/admin/branding/components/ContentEditor.tsx
+  - frontend/app/admin/branding/components/LivePreview.tsx
+
+
+FASE 3B: LEADERBOARD OPZIONALE (1 settimana)
+--------------------------------------------
+
+Sprint 3B.1: Backend Leaderboard
+  [ ] Aggiungere campi leaderboard_* a Promotion
+  [ ] Modificare API GET /api/leaderboard per check enabled
+  [ ] API toggle leaderboard on/off
+  [ ] API configurazione opzioni leaderboard
+
+Sprint 3B.2: Frontend Leaderboard
+  [ ] Condizionare visualizzazione leaderboard
+  [ ] Toggle leaderboard in admin promotion settings
+  [ ] Opzioni visualizzazione (nomi, premi, stile)
+  [ ] Componenti stile 'minimal', 'full', 'cards'
+
+File da modificare:
+  - backend/prisma/schema.prisma (campi Promotion)
+  - backend/src/server.ts (route leaderboard)
+  - frontend/app/play/components/LiveLeaderboard.tsx
+  - frontend/app/admin/dashboard/components/PromotionSelector.tsx
+
+
+FASE 4: LICENSING & LIMITS (1 settimana)
+----------------------------------------
+
+Sprint 4.1: Sistema Licenze
+  [ ] Verifica licenza in middleware
+  [ ] Blocco automatico se expired
+  [ ] Grace period configurabile
+  [ ] Email notifiche scadenza (cron job)
+  [ ] Pagina "Licenza scaduta" per tenant
+
+Sprint 4.2: Enforcement Limiti
+  [ ] Check limiti prima di creare promozione
+  [ ] Check limiti prima di generare token
+  [ ] Check limiti staff users
+  [ ] UI feedback limiti raggiunti
+  [ ] Prompt upgrade
+
+
+FASE 5: ONBOARDING & POLISH (1 settimana)
+-----------------------------------------
+
+Sprint 5.1: Onboarding Flow
+  [ ] Wizard setup nuovo tenant
+  [ ] Email benvenuto automatica
+  [ ] Credenziali temporanee con cambio obbligatorio
+  [ ] Checklist setup completamento
+  [ ] Help tooltips
+
+Sprint 5.2: Documentazione
+  [ ] Guida utente tenant
+  [ ] API documentation
+  [ ] FAQ
+  [ ] Video tutorial
+
+
+FASE 6: BILLING (Opzionale, 2 settimane)
+----------------------------------------
+
+Sprint 6.1: Integrazione Stripe
+  [ ] Stripe Checkout per pagamenti
+  [ ] Webhook gestione pagamenti
+  [ ] Abbonamenti ricorrenti
+  [ ] Gestione carte salvate
+
+Sprint 6.2: Fatturazione
+  [ ] Generazione fatture PDF
+  [ ] Numerazione progressiva
+  [ ] Invio automatico email
+  [ ] Storico fatture tenant
+  [ ] Export contabile
+
+
+================================================================================
+                         ARCHITETTURA HOSTING TARGET
+================================================================================
+
+FASE MVP (Budget ~€50-100/mese)
+-------------------------------
+
+┌─────────────────────────────────────────────────────────────┐
+│                      CLOUDFLARE                              │
+│              (DNS, SSL Wildcard, CDN, DDoS)                 │
+│                                                              │
+│   *.instantwin.io  ──►  Wildcard Certificate                │
+│   Custom domains   ──►  CNAME to *.instantwin.io            │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+         ┌────────────────┼────────────────┐
+         ▼                ▼                ▼
+┌─────────────┐  ┌─────────────────┐  ┌──────────────┐
+│   Vercel    │  │    Railway      │  │   Railway    │
+│  Frontend   │  │    Backend      │  │  PostgreSQL  │
+│   (Free-    │  │   ($5-20/mo)    │  │   ($5/mo)    │
+│    $20/mo)  │  │                 │  │              │
+└─────────────┘  └─────────────────┘  └──────────────┘
+
+
+CONFIGURAZIONE DNS:
+-------------------
+
+Cloudflare DNS Records:
+
+  # Wildcard per subdomain tenant
+  *.instantwin.io    CNAME    cname.vercel-dns.com
+
+  # Root domain
+  instantwin.io      A        76.76.21.21 (Vercel)
+
+  # API backend
+  api.instantwin.io  CNAME    [railway-app].up.railway.app
+
+  # Custom domain (esempio Campari)
+  # Cliente aggiunge nel suo DNS:
+  lotteria.campari.com  CNAME  campari.instantwin.io
+
+
+VERCEL CONFIGURATION:
+---------------------
+
+vercel.json:
+{
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://api.instantwin.io/:path*" }
+  ]
+}
+
+Domini configurati in Vercel:
+  - instantwin.io (produzione)
+  - *.instantwin.io (wildcard per tenant)
+
+
+FASE SCALE (10+ clienti, ~€200-500/mese)
+----------------------------------------
+
+Aggiungere:
+  - Redis (Upstash) per caching e rate limiting distribuito
+  - Cloudflare R2 per storage assets
+  - Monitoring (Sentry, LogRocket)
+  - Database replica per read scaling
+
+
+================================================================================
+                              RISCHI E MITIGAZIONI
+================================================================================
+
+RISCHIO: Isolamento dati insufficiente
+IMPATTO: Critico
+MITIGAZIONE:
+  - Row-level security PostgreSQL
+  - Test automatici isolamento
+  - Audit logging accessi
+  - Penetration testing
+
+RISCHIO: Performance degradata con molti tenant
+IMPATTO: Alto
+MITIGAZIONE:
+  - Indici su tenant_id
+  - Query optimization
+  - Connection pooling
+  - Caching aggressivo
+
+RISCHIO: Complessita' gestione domini custom
+IMPATTO: Medio
+MITIGAZIONE:
+  - Documentazione chiara per clienti
+  - Verifica automatica CNAME
+  - Fallback su subdomain
+
+RISCHIO: Churn clienti
+IMPATTO: Medio
+MITIGAZIONE:
+  - Onboarding eccellente
+  - Supporto reattivo
+  - Feature roadmap trasparente
+  - Lock-in minimo (export dati facile)
+
+
+================================================================================
+                              METRICHE DI SUCCESSO
+================================================================================
+
+KPI BUSINESS:
+  - MRR (Monthly Recurring Revenue)
+  - Numero tenant attivi
+  - Churn rate < 5%
+  - NPS > 40
+  - Time to first promotion < 24h
+
+KPI TECNICI:
+  - Uptime > 99.5%
+  - API latency p95 < 200ms
+  - Error rate < 0.1%
+  - Deployment frequency > 1/settimana
+
+
+================================================================================
+                                 APPENDICI
+================================================================================
+
+A. GLOSSARIO
+------------
+- Tenant: Cliente della piattaforma (es. Campari)
+- Promotion: Singola campagna instant win
+- Token: Codice di accesso per giocare
+- Activation: Acquisto/attivazione servizio
+
+B. RIFERIMENTI FILE ESISTENTI
+-----------------------------
+Backend:
+  - backend/prisma/schema.prisma (194 righe)
+  - backend/src/server.ts (1978 righe)
+  - backend/src/middlewares/authMiddleware.ts (146 righe)
+  - backend/src/services/ProbabilityEngine.ts (355 righe)
+
+Frontend:
+  - frontend/app/layout.tsx
+  - frontend/app/globals.css
+  - frontend/app/play/page.tsx (550 righe)
+  - frontend/app/admin/dashboard/page.tsx (505 righe)
+
+C. CONTATTI
+-----------
+[Da definire]
+
+
+================================================================================
+                              FINE DOCUMENTO
+================================================================================
+
+Versione: 1.1
+Ultima modifica: 22 Dicembre 2024
+Changelog:
+  - v1.1: Aggiunto RF-005 Branding Avanzato (font, testi, assets)
+  - v1.1: Aggiunto RF-006 Leaderboard come feature opzionale
+  - v1.1: Aggiornata tabella pricing con livelli branding
+  - v1.1: Aggiunta sezione ADD-ONS
+  - v1.1: Espansa FASE 3 implementazione branding
+  - v1.1: Aggiunta FASE 3B implementazione leaderboard opzionale
+
+Prossima revisione: [Da definire]

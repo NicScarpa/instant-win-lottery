@@ -1,0 +1,245 @@
+================================================================================
+                    DEVELOPMENT REPORT - INSTANT WIN PLATFORM
+================================================================================
+
+Data: 30 Dicembre 2024
+
+================================================================================
+                           SVILUPPO COMPLETATO
+================================================================================
+
+--------------------------------------------------------------------------------
+1. SISTEMA EMAIL
+--------------------------------------------------------------------------------
+
+File creati/modificati:
+  - backend/src/services/EmailService.ts - Servizio email con nodemailer
+  - backend/.env.example - Configurazione SMTP
+
+Funzionalita:
+  - Password reset via email con token sicuro (1 ora di validita)
+  - Template email HTML responsive per:
+    * Reset password
+    * Notifica scadenza licenza
+    * Welcome email per nuovi tenant
+  - Supporto multi-tenant (email brandizzate per tenant)
+  - Fallback in development mode (token mostrato in console)
+
+API Endpoints:
+  - POST /api/auth/forgot-password    - Richiesta reset password
+  - POST /api/auth/verify-reset-token - Verifica validita token
+  - POST /api/auth/reset-password     - Reset password con token
+  - POST /api/auth/change-password    - Cambio password (autenticato)
+
+Frontend:
+  - /admin/forgot-password - Pagina richiesta reset
+  - /admin/reset-password  - Pagina reset con token
+  - Link "Password dimenticata?" nella login page
+
+--------------------------------------------------------------------------------
+2. UPLOAD ASSETS
+--------------------------------------------------------------------------------
+
+Gia presente nel codebase:
+  - Multer configurato con storage per tenant
+  - Isolamento file per tenant (directory separate)
+  - Validazione tipo file (solo immagini)
+  - Limite dimensione 5MB
+
+API Endpoints aggiunti:
+  - GET    /api/admin/uploads          - Lista file caricati per tenant
+  - POST   /api/admin/upload           - Upload file con tipo (logo, background)
+  - DELETE /api/admin/upload/:filename - Elimina file
+
+Frontend:
+  - BrandingManager con upload zone per logo, favicon, background, og-image
+
+--------------------------------------------------------------------------------
+3. AUDIT LOG
+--------------------------------------------------------------------------------
+
+Gia implementato:
+  - AuditService con logging completo
+  - Supporto per tutte le azioni principali
+  - Paginazione e filtri
+
+API Endpoints:
+  - GET /api/admin/audit-logs       - Lista log con paginazione
+  - GET /api/admin/audit-logs/stats - Statistiche azioni
+
+Frontend:
+  - AuditLogViewer component con:
+    * Filtro per tipo azione
+    * Paginazione
+    * Icone e colori per tipo azione
+    * Dettagli JSON espandibili
+
+--------------------------------------------------------------------------------
+4. ANALYTICS SUPER ADMIN
+--------------------------------------------------------------------------------
+
+API Endpoints aggiunti:
+  - GET /api/superadmin/analytics
+    * Conteggi totali (tenants, promotions, tokens, plays, wins, customers)
+    * Win rate globale
+    * Top 10 tenants per giocate
+    * Distribuzione per piano e status
+
+  - GET /api/superadmin/analytics/trends
+    * Trend giornalieri (configurabile per giorni)
+
+  - GET /api/superadmin/analytics/recent-activity
+    * Attivita recente cross-tenant
+
+Frontend Dashboard Super Admin:
+  - 8 KPI cards (Tenants, Promozioni, Attive, Token, Giocate, Vincite, Clienti, Win Rate)
+  - Distribuzione per piano e status
+  - Top 5 tenants per giocate
+  - Tabella tenants con azioni
+
+
+================================================================================
+                           RISULTATI DEBUG
+================================================================================
+
+Compilazione:
+  [OK] TypeScript backend
+  [OK] TypeScript frontend
+  [OK] Prisma schema VALIDO
+  [OK] Build production
+
+Sicurezza:
+  [OK] Nessun password hardcoded nel codice sorgente
+  [OK] Password test solo in file seed-e2e.ts e test files
+  [OK] Nessun raw SQL query (solo Prisma ORM)
+  [OK] File upload isolati per tenant
+
+
+================================================================================
+                    FEATURES DA INTEGRARE (PRODUZIONE)
+================================================================================
+
+--------------------------------------------------------------------------------
+ALTA PRIORITA
+--------------------------------------------------------------------------------
+
+Feature                  | Descrizione                                    | Effort
+-------------------------|------------------------------------------------|--------
+Configurazione SMTP      | Configurare email provider (Resend, SendGrid) | Basso
+Rate Limiter IPv6        | Fixare warning express-rate-limit per IPv6    | Basso
+Security Headers         | Aggiungere helmet.js per headers sicurezza    | Basso
+CORS Production          | Configurare CORS per domini production        | Basso
+Logging Strutturato      | Sostituire console.log con logger (winston)   | Medio
+
+--------------------------------------------------------------------------------
+MEDIA PRIORITA
+--------------------------------------------------------------------------------
+
+Feature                  | Descrizione                                    | Effort
+-------------------------|------------------------------------------------|--------
+Backup Database          | Script backup automatico PostgreSQL            | Medio
+Cron Jobs                | Scheduler per notifiche licenze, cleanup       | Medio
+CDN Assets               | Migrare upload a Cloudflare R2/S3              | Medio
+Monitoring               | Integrare Sentry per error tracking            | Basso
+Cache Redis              | Cache per dati frequenti (tenant info)         | Alto
+
+--------------------------------------------------------------------------------
+BASSA PRIORITA (POST-MVP)
+--------------------------------------------------------------------------------
+
+Feature                  | Descrizione                                    | Effort
+-------------------------|------------------------------------------------|--------
+Billing Stripe           | Gestione abbonamenti e fatturazione            | Alto
+Custom Domain SSL        | Certificati automatici per domini custom       | Alto
+API Rate Limiting        | Rate limit per tenant/API key                  | Medio
+Webhook System           | Notifiche eventi a sistemi esterni             | Medio
+Export Dati              | Export CSV/Excel partecipanti e vincitori      | Basso
+
+
+================================================================================
+                         CRITICITA DA RISOLVERE
+================================================================================
+
+--------------------------------------------------------------------------------
+1. RATE LIMITER IPv6 WARNING
+--------------------------------------------------------------------------------
+File: backend/src/server.ts:216
+
+Errore:
+  ValidationError: Custom keyGenerator appears to use request IP without
+  calling the ipKeyGenerator helper function for IPv6 addresses.
+
+Soluzione:
+  Usare ipKeyGenerator di express-rate-limit o rimuovere custom keyGenerator.
+
+--------------------------------------------------------------------------------
+2. CONSOLE LOGS IN PRODUZIONE
+--------------------------------------------------------------------------------
+Problema:
+  80+ console.log/error/warn nel server.ts
+
+Soluzione:
+  Implementare logger strutturato (winston/pino) con livelli configurabili.
+
+--------------------------------------------------------------------------------
+3. SMTP NON CONFIGURATO DI DEFAULT
+--------------------------------------------------------------------------------
+Problema:
+  EmailService fallisce silenziosamente senza SMTP
+
+Soluzione:
+  Considerare servizio email-as-a-service (Resend) che non richiede SMTP.
+
+--------------------------------------------------------------------------------
+4. SECRET MANAGEMENT
+--------------------------------------------------------------------------------
+Problema:
+  JWT_SECRET in .env file
+
+Soluzione:
+  Per produzione, usare secret manager (Railway Secrets, AWS Secrets Manager).
+
+--------------------------------------------------------------------------------
+5. FILE UPLOAD STORAGE
+--------------------------------------------------------------------------------
+Problema:
+  File salvati su filesystem locale (non persistente su Railway)
+
+Soluzione:
+  Migrare a Cloudflare R2 o AWS S3 per storage persistente.
+
+
+================================================================================
+                          CHECKLIST PRE-DEPLOY
+================================================================================
+
+[ ] Configurare variabili ambiente produzione
+[ ] Impostare DATABASE_URL PostgreSQL
+[ ] Generare JWT_SECRET forte (openssl rand -base64 32)
+[ ] Configurare FRONTEND_URL per CORS
+[ ] Configurare SMTP (opzionale ma consigliato)
+[ ] Eseguire migrations: npm run db:migrate:deploy
+[ ] Eseguire seed iniziale: npm run seed
+[ ] Verificare SSL/HTTPS attivo
+[ ] Testare flusso completo (login, play, win)
+
+
+================================================================================
+                          STATISTICHE CODEBASE
+================================================================================
+
+Backend:
+  - server.ts: ~3400 righe
+  - Services: 7 files
+  - Middlewares: 3 files
+  - Models Prisma: 14 tabelle
+
+Frontend:
+  - Pages: 12 routes
+  - Components: 20+ componenti dashboard
+  - Supporto i18n: IT/EN
+
+
+================================================================================
+                              FINE REPORT
+================================================================================

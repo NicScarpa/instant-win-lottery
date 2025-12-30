@@ -17,6 +17,12 @@ import AdminLeaderboard from './components/AdminLeaderboard';
 import RevenueStats from './components/RevenueStats';
 import TopNav from './components/TopNav';
 import StatsHeader from './components/StatsHeader';
+import BrandingManager from './components/BrandingManager';
+import EngineConfig from './components/EngineConfig';
+import LeaderboardSettings from './components/LeaderboardSettings';
+import StaffManager from './components/StaffManager';
+import OnboardingWizard from './components/OnboardingWizard';
+import AuditLogViewer from './components/AuditLogViewer';
 import { getApiUrl } from '../../lib/api';
 
 export interface Promotion {
@@ -48,9 +54,35 @@ export default function AdminDashboardPage() {
     const [triggerEdit, setTriggerEdit] = useState(false);
     const [triggerDelete, setTriggerDelete] = useState(false);
 
+    // Stato per impersonation (super admin che accede come tenant admin)
+    const [impersonationInfo, setImpersonationInfo] = useState<{ tenantName: string; tenantSlug: string } | null>(null);
+
+    // Stato per onboarding wizard
+    const [showOnboarding, setShowOnboarding] = useState(false);
+
     const forceDataRefresh = () => {
         setDataRefreshKey(prevKey => prevKey + 1);
     }
+
+    // Carica info impersonation da localStorage
+    useEffect(() => {
+        const storedInfo = localStorage.getItem('impersonation_info');
+        if (storedInfo) {
+            try {
+                setImpersonationInfo(JSON.parse(storedInfo));
+            } catch (e) {
+                localStorage.removeItem('impersonation_info');
+            }
+        }
+    }, []);
+
+    // Esci dall'impersonation e torna alla super admin dashboard
+    const exitImpersonation = () => {
+        localStorage.removeItem('admin_token');
+        localStorage.removeItem('impersonation_info');
+        setImpersonationInfo(null);
+        router.push('/superadmin/dashboard');
+    };
 
     const handleLogout = async () => {
         setLoading(true);
@@ -118,6 +150,12 @@ export default function AdminDashboardPage() {
 
             if (res.ok) {
                 await fetchPromotions();
+                // Controlla se mostrare onboarding per nuovi tenant
+                const onboardingCompleted = localStorage.getItem('onboarding_completed');
+                const onboardingSkipped = localStorage.getItem('onboarding_skipped');
+                if (!onboardingCompleted && !onboardingSkipped && !impersonationInfo) {
+                    setShowOnboarding(true);
+                }
                 setLoading(false);
             } else {
                 localStorage.removeItem('admin_token');
@@ -270,6 +308,26 @@ export default function AdminDashboardPage() {
 
     return (
         <div className="min-h-screen bg-[#f3efe6] font-sans relative overflow-hidden">
+            {/* Impersonation Banner */}
+            {impersonationInfo && (
+                <div className="fixed top-0 left-0 right-0 z-50 bg-purple-700 text-white px-4 py-2 flex items-center justify-between shadow-lg">
+                    <div className="flex items-center gap-2 text-sm">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-6-3a2 2 0 11-4 0 2 2 0 014 0zm-2 4a5 5 0 00-4.546 2.916A5.986 5.986 0 0010 16a5.986 5.986 0 004.546-2.084A5 5 0 0010 11z" clipRule="evenodd" />
+                        </svg>
+                        <span>
+                            Stai visualizzando come <strong>{impersonationInfo.tenantName}</strong>
+                        </span>
+                    </div>
+                    <button
+                        onClick={exitImpersonation}
+                        className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-sm font-medium transition-colors"
+                    >
+                        Esci
+                    </button>
+                </div>
+            )}
+
             {/* Background radial gradients */}
             <div className="fixed top-[-10%] right-[-10%] w-[1000px] h-[1000px] bg-[#b42a28]/5 rounded-full blur-[150px] animate-pulse pointer-events-none"></div>
             <div className="fixed bottom-[-5%] left-[-5%] w-[800px] h-[800px] bg-white rounded-full blur-[150px] pointer-events-none"></div>
@@ -286,7 +344,7 @@ export default function AdminDashboardPage() {
             />
 
             {/* Main Content */}
-            <div className="relative z-10 max-w-[1680px] mx-auto pb-16">
+            <div className={`relative z-10 max-w-[1680px] mx-auto pb-16 ${impersonationInfo ? 'pt-10' : ''}`}>
                 {/* Desktop Top Navigation */}
                 <TopNav
                     currentView={currentView}
@@ -344,15 +402,29 @@ export default function AdminDashboardPage() {
                         {/* VIEW: DASHBOARD */}
                         {currentView === 'dashboard' && (
                             <>
-                                {/* Revenue Stats */}
+                                {/* Onboarding Wizard for new tenants */}
+                                {showOnboarding && (
+                                    <OnboardingWizard
+                                        onComplete={() => setShowOnboarding(false)}
+                                        onNavigate={(view) => {
+                                            setShowOnboarding(false);
+                                            setCurrentView(view);
+                                        }}
+                                    />
+                                )}
+
+                                {/* Revenue Stats - Hide during onboarding */}
+                                {!showOnboarding && (
                                 <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
                                     <RevenueStats
                                         promotionId={currentPromotion.id}
                                         refreshKey={dataRefreshKey}
                                     />
                                 </div>
+                                )}
 
-                                {/* Two Column Grid for Desktop */}
+                                {/* Two Column Grid for Desktop - Hide during onboarding */}
+                                {!showOnboarding && (
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
                                     {/* Prize Overview */}
                                     <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
@@ -370,8 +442,10 @@ export default function AdminDashboardPage() {
                                         />
                                     </div>
                                 </div>
+                                )}
 
-                                {/* Live Leaderboard */}
+                                {/* Live Leaderboard - Hide during onboarding */}
+                                {!showOnboarding && (
                                 <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
                                     <div className="flex justify-between items-center mb-6">
                                         <div className="flex items-center gap-3">
@@ -397,8 +471,10 @@ export default function AdminDashboardPage() {
                                         refreshKey={dataRefreshKey}
                                     />
                                 </div>
+                                )}
 
-                                {/* Recent Activity */}
+                                {/* Recent Activity - Hide during onboarding */}
+                                {!showOnboarding && (
                                 <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
                                     <div className="flex justify-between items-center mb-6">
                                         <h3 className="font-bold text-xl text-gray-800">Ultimi Token Utilizzati</h3>
@@ -415,6 +491,7 @@ export default function AdminDashboardPage() {
                                         limit={5}
                                     />
                                 </div>
+                                )}
                             </>
                         )}
 
@@ -494,6 +571,37 @@ export default function AdminDashboardPage() {
                                         key={`logs-${currentPromotion.id}-${dataRefreshKey}`}
                                     />
                                 </div>
+                            </div>
+                        )}
+
+                        {/* VIEW: STAFF */}
+                        {currentView === 'staff' && (
+                            <StaffManager refreshKey={dataRefreshKey} />
+                        )}
+
+                        {/* VIEW: AUDIT LOG */}
+                        {currentView === 'audit' && (
+                            <AuditLogViewer refreshKey={dataRefreshKey} />
+                        )}
+
+                        {/* VIEW: BRANDING */}
+                        {currentView === 'branding' && (
+                            <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
+                                <BrandingManager />
+                            </div>
+                        )}
+
+                        {/* VIEW: ENGINE CONFIG */}
+                        {currentView === 'engine' && (
+                            <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
+                                <EngineConfig promotionId={currentPromotion.id} />
+                            </div>
+                        )}
+
+                        {/* VIEW: LEADERBOARD SETTINGS */}
+                        {currentView === 'leaderboard' && (
+                            <div className="card-glass rounded-[2rem] md:rounded-[3rem] p-6 md:p-8 glow-hover">
+                                <LeaderboardSettings promotionId={currentPromotion.id} />
                             </div>
                         )}
 

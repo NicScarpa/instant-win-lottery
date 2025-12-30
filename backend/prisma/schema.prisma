@@ -1,32 +1,178 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// SQLite schema for local development
+// Copy to schema.prisma for local dev: cp prisma/schema.sqlite.prisma prisma/schema.prisma
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql" // Production: PostgreSQL on Railway
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
-// --------------------------------------
-// 1. Promotions & Configuration
-// --------------------------------------
+// ==========================================
+// MULTI-TENANT MODELS
+// ==========================================
+
+model Tenant {
+  id                  String   @id @default(cuid())
+  name                String
+  slug                String   @unique
+
+  // Branding base
+  logoUrl             String?
+  primaryColor        String   @default("#b42a28")
+  secondaryColor      String   @default("#f3efe6")
+  accentColor         String   @default("#2d2d2d")
+
+  // Domini
+  subdomain           String   @unique
+  customDomain        String?
+
+  // Piano e limiti
+  plan                String   @default("starter") // starter, pro, enterprise
+  maxPromotions       Int      @default(1)
+  maxTokensPerPromo   Int      @default(500)
+  maxStaffUsers       Int      @default(2)
+
+  // Licenza
+  licenseKey          String   @unique
+  licenseStatus       String   @default("trial") // trial, active, suspended, expired
+  licenseStart        DateTime @default(now())
+  licenseEnd          DateTime?
+
+  // Contatti
+  adminEmail          String
+  adminPhone          String?
+  companyName         String?
+  vatNumber           String?
+
+  // Timestamps
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Relazioni
+  promotions          Promotion[]
+  staffUsers          StaffUser[]
+  branding            TenantBranding?
+  contents            TenantContent[]
+  auditLogs           AuditLog[]
+
+  @@index([subdomain])
+  @@index([customDomain])
+  @@index([licenseStatus])
+}
+
+model TenantBranding {
+  id              String  @id @default(cuid())
+  tenantId        String  @unique
+  tenant          Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Colori estesi
+  colorPrimary    String  @default("#b42a28")
+  colorSecondary  String  @default("#f3efe6")
+  colorAccent     String  @default("#2d2d2d")
+  colorTextDark   String  @default("#1a1a1a")
+  colorTextLight  String  @default("#ffffff")
+  colorTextMuted  String  @default("#6b7280")
+  colorSuccess    String  @default("#22c55e")
+  colorError      String  @default("#ef4444")
+
+  // Font
+  fontHeading     String  @default("Inter")
+  fontBody        String  @default("Inter")
+  fontHeadingUrl  String?
+  fontBodyUrl     String?
+
+  // Assets
+  logoMainUrl     String?
+  logoIconUrl     String?
+  faviconUrl      String?
+  backgroundUrl   String?
+  ogImageUrl      String?
+
+  // CSS custom
+  customCss       String?
+
+  updatedAt       DateTime @updatedAt
+}
+
+model TenantContent {
+  id              String  @id @default(cuid())
+  tenantId        String
+  tenant          Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  language        String  @default("it")
+
+  // Landing page
+  landingTitle    String  @default("Tenta la fortuna!")
+  landingSubtitle String?
+  landingCtaText  String  @default("Gioca Ora")
+  tokenPlaceholder String @default("Inserisci il tuo codice")
+  errorInvalidToken String @default("Codice non valido")
+  errorUsedToken  String  @default("Codice già utilizzato")
+
+  // Form
+  formTitle       String  @default("Completa la registrazione")
+  labelFirstName  String  @default("Nome")
+  labelLastName   String  @default("Cognome")
+  labelPhone      String  @default("Numero di telefono")
+  consentPrivacy  String  @default("Accetto i termini e condizioni")
+  consentMarketing String @default("Accetto di ricevere comunicazioni marketing")
+  formSubmitText  String  @default("Partecipa")
+
+  // Risultati
+  winTitle        String  @default("Congratulazioni!")
+  winMessage      String  @default("Hai vinto: {prize_name}")
+  winInstructions String?
+  loseTitle       String  @default("Peccato!")
+  loseMessage     String  @default("Non hai vinto, ritenta!")
+  thankYouMessage String?
+
+  // Footer
+  footerCopyright String?
+  footerContact   String?
+
+  // Legal
+  termsUrl        String?
+  privacyUrl      String?
+
+  @@unique([tenantId, language])
+}
+
+model SuperAdmin {
+  id            Int      @id @default(autoincrement())
+  username      String   @unique
+  passwordHash  String
+  email         String   @unique
+  createdAt     DateTime @default(now())
+}
+
+// ==========================================
+// PROMOTION & CONFIGURATION
+// ==========================================
 
 model Promotion {
   id                  Int       @id @default(autoincrement())
+
+  // Multi-tenant
+  tenantId            String
+  tenant              Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
   name                String
   description         String?
   start_datetime      DateTime
   end_datetime        DateTime
   status              String    @default("draft") // draft, active, closed
   planned_token_count Int       @default(0)
-  
-  // Leaderboard config
+
+  // Leaderboard config (5.5 - Opzionale)
   leaderboard_active  Boolean   @default(true)
   leaderboard_size    Int       @default(10)
-  
+  leaderboard_enabled Boolean   @default(false)
+  leaderboard_show_names Boolean @default(true)
+  leaderboard_show_prizes Boolean @default(false)
+  leaderboard_style   String    @default("minimal") // minimal, full, cards
+
   // Legal
   terms_url           String?
   privacy_url         String?
@@ -37,20 +183,83 @@ model Promotion {
   customers           Customer[]
   plays               Play[]
   prize_assignments   PrizeAssignment[]
-  final_leaderboard   FinalLeaderboard[] 
+  final_leaderboard   FinalLeaderboard[]
+  engine_config       PromotionEngineConfig?
 
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
 }
 
-// --------------------------------------
-// 2. Prize Model
-// --------------------------------------
+// ==========================================
+// PROBABILITY ENGINE CONFIGURATION (5.6)
+// ==========================================
+
+model PromotionEngineConfig {
+  id                  Int      @id @default(autoincrement())
+  promotionId         Int      @unique
+  promotion           Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  // Fatigue settings
+  fatigueEnabled            Boolean @default(true)
+  fatiguePlayThreshold      Int     @default(6)
+  fatiguePlayBasePenalty    Float   @default(0.10)
+  fatiguePlayIncrement      Float   @default(0.02)
+  fatiguePlayMax            Float   @default(0.50)
+  fatigueWinPenalty         Float   @default(0.20)
+  fatigueWinMax             Float   @default(0.60)
+  fatigueMinProbability     Float   @default(0.10)
+
+  // Pacing settings
+  pacingEnabled             Boolean @default(true)
+  pacingTooFastThreshold    Float   @default(1.30)
+  pacingTooFastMultiplier   Float   @default(0.60)
+  pacingFastThreshold       Float   @default(1.15)
+  pacingFastMultiplier      Float   @default(0.80)
+  pacingSlowThreshold       Float   @default(0.85)
+  pacingSlowMultiplier      Float   @default(1.20)
+  pacingTooSlowThreshold    Float   @default(0.70)
+  pacingTooSlowMultiplier   Float   @default(1.40)
+
+  // Time Pressure settings
+  timePressureEnabled       Boolean @default(true)
+  timeConservationStartMin  Int     @default(60)
+  timeDistributionStartMin  Int     @default(5)
+  timeFinalStartMin         Int     @default(1)
+  timeConservationMin       Float   @default(0.30)
+  timeConservationMax       Float   @default(0.80)
+  timeConservationBoost     Float   @default(1.30)
+  timeDistributionMin       Float   @default(1.50)
+  timeDistributionMax       Float   @default(5.00)
+  timeFinalBoost            Float   @default(10.00)
+
+  // Force Win (v2.2)
+  forceWinEnabled           Boolean @default(false)
+  forceWinThresholdMin      Int     @default(1)
+
+  // Desperation Mode (v2.2)
+  desperationModeEnabled    Boolean @default(false)
+  desperationStartMin       Int     @default(5)
+
+  // Global settings
+  maxProbability            Float   @default(1.00)
+  minProbability            Float   @default(0.001)
+  loggingEnabled            Boolean @default(false)
+
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
+
+// ==========================================
+// PRIZE MODELS
+// ==========================================
 
 model PrizeType {
   id                      Int      @id @default(autoincrement())
   promotion_id            Int
-  promotion               Promotion @relation(fields: [promotion_id], references: [id])
+  promotion               Promotion @relation(fields: [promotion_id], references: [id], onDelete: Cascade)
 
   name                    String
   description             String?
@@ -65,65 +274,65 @@ model PrizeType {
 model PrizeAssignment {
   id                  Int       @id @default(autoincrement())
   promotion_id        Int
-  promotion           Promotion @relation(fields: [promotion_id], references: [id])
-  
+  promotion           Promotion @relation(fields: [promotion_id], references: [id], onDelete: Cascade)
+
   prize_type_id       Int
-  prize_type          PrizeType @relation(fields: [prize_type_id], references: [id])
-  
+  prize_type          PrizeType @relation(fields: [prize_type_id], references: [id], onDelete: Cascade)
+
   customer_id         Int
-  customer            Customer  @relation(fields: [customer_id], references: [id])
-  
+  customer            Customer  @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+
   token_id            Int       @unique
-  token               Token     @relation(fields: [token_id], references: [id])
-  
+  token               Token     @relation(fields: [token_id], references: [id], onDelete: Cascade)
+
   play_id             Int       @unique
-  play                Play      @relation(fields: [play_id], references: [id])
+  play                Play      @relation(fields: [play_id], references: [id], onDelete: Cascade)
 
   prize_code          String    @unique // Code to show to staff
-  
+
   assigned_at         DateTime  @default(now())
   redeemed_at         DateTime?
   redeemed_by_staff_id Int?
   redeemed_by_staff   StaffUser? @relation(fields: [redeemed_by_staff_id], references: [id])
 }
 
-// --------------------------------------
-// 3. Tokens
-// --------------------------------------
+// ==========================================
+// TOKENS
+// ==========================================
 
 model Token {
   id              Int       @id @default(autoincrement())
   promotion_id    Int
-  promotion       Promotion @relation(fields: [promotion_id], references: [id])
-  
+  promotion       Promotion @relation(fields: [promotion_id], references: [id], onDelete: Cascade)
+
   token_code      String    @unique
   status          String    @default("available") // available, used, invalid
   batch_id        String?   // Optional batch reference
-  
+
   created_at      DateTime  @default(now())
   used_at         DateTime?
-  
+
   play            Play?
   prize_assignment PrizeAssignment?
 }
 
-// --------------------------------------
-// 4. Customers & Plays
-// --------------------------------------
+// ==========================================
+// CUSTOMERS & PLAYS
+// ==========================================
 
 model Customer {
   id                  Int       @id @default(autoincrement())
   promotion_id        Int
-  promotion           Promotion @relation(fields: [promotion_id], references: [id])
+  promotion           Promotion @relation(fields: [promotion_id], references: [id], onDelete: Cascade)
 
   first_name          String
   last_name           String
   phone_number        String
 
   total_plays         Int       @default(0)
-  total_wins          Int       @default(0)    // Contatore vittorie totali
-  last_win_at         DateTime?                // Timestamp ultima vittoria
-  detected_gender     String?                  // 'F', 'M', 'U'
+  total_wins          Int       @default(0)
+  last_win_at         DateTime?
+  detected_gender     String?   // 'F', 'M', 'U'
 
   // Consents
   consent_marketing   Boolean   @default(false)
@@ -138,57 +347,96 @@ model Customer {
   prize_assignments   PrizeAssignment[]
   final_rank          FinalLeaderboard[]
 
-  @@unique([promotion_id, phone_number]) // Unico utente per promozione
+  @@unique([promotion_id, phone_number])
 }
 
 model Play {
   id                  Int       @id @default(autoincrement())
   promotion_id        Int
-  promotion           Promotion @relation(fields: [promotion_id], references: [id])
-  
+  promotion           Promotion @relation(fields: [promotion_id], references: [id], onDelete: Cascade)
+
   token_id            Int       @unique
-  token               Token     @relation(fields: [token_id], references: [id])
-  
+  token               Token     @relation(fields: [token_id], references: [id], onDelete: Cascade)
+
   customer_id         Int
-  customer            Customer  @relation(fields: [customer_id], references: [id])
-  
+  customer            Customer  @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+
   is_winner           Boolean   @default(false)
   prize_assignment    PrizeAssignment?
-  
+
   created_at          DateTime  @default(now())
 }
 
-// --------------------------------------
-// 5. Staff & Admin
-// --------------------------------------
+// ==========================================
+// STAFF & ADMIN
+// ==========================================
 
 model StaffUser {
   id              Int       @id @default(autoincrement())
+
+  // Multi-tenant
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
   username        String    @unique
   password_hash   String
   role            String    @default("staff") // staff, admin
   created_at      DateTime  @default(now())
-  
+
+  // Password Reset
+  resetToken      String?   @unique
+  resetTokenExpiry DateTime?
+
   redeemed_prizes PrizeAssignment[]
+
+  @@index([tenantId])
 }
 
-// --------------------------------------
-// 6. Final Leaderboard (Snapshot)
-// --------------------------------------
+// ==========================================
+// FINAL LEADERBOARD (Snapshot)
+// ==========================================
 
 model FinalLeaderboard {
   id           Int      @id @default(autoincrement())
   promotion_id Int
-  promotion    Promotion @relation(fields: [promotion_id], references: [id])
+  promotion    Promotion @relation(fields: [promotion_id], references: [id], onDelete: Cascade)
   customer_id  Int
-  customer     Customer @relation(fields: [customer_id], references: [id])
-  
+  customer     Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+
   rank         Int
   total_plays  Int
   snapshot_at  DateTime @default(now())
-  
+
   // Campi denormalizzati per export facile
   first_name   String?
   last_name    String?
   phone_number String?
+}
+
+// ==========================================
+// AUDIT LOG
+// ==========================================
+
+model AuditLog {
+  id          Int       @id @default(autoincrement())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  action      String    // CREATE_PROMOTION, GENERATE_TOKENS, REDEEM_PRIZE, etc.
+  entity      String    // promotion, token, prize, staff
+  entityId    String?   // ID dell'entità coinvolta
+  details     String?   // JSON con dettagli aggiuntivi
+
+  userId      Int?      // Staff user che ha eseguito l'azione (null se sistema)
+  userType    String    @default("staff") // staff, admin, system
+  username    String?   // Username per riferimento rapido
+
+  ipAddress   String?
+  userAgent   String?
+
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([tenantId, action])
+  @@index([tenantId, createdAt])
 }

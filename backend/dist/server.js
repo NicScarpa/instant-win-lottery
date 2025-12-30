@@ -9,10 +9,14 @@ const crypto_1 = __importDefault(require("crypto"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const client_1 = require("@prisma/client");
 const ProbabilityEngine_1 = require("./services/ProbabilityEngine");
+const genderDetection_1 = require("./utils/genderDetection");
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const authMiddleware_1 = require("./middlewares/authMiddleware");
+const tenantMiddleware_1 = require("./middlewares/tenantMiddleware");
+const licenseMiddleware_1 = require("./middlewares/licenseMiddleware");
+const LicenseService_1 = require("./services/LicenseService");
 const qrcode_1 = __importDefault(require("qrcode"));
 const pdfkit_1 = __importDefault(require("pdfkit"));
 const app = (0, express_1.default)();
@@ -71,9 +75,6 @@ const CORS_ORIGINS = process.env.CORS_ORIGINS
     : [
         APP_URL,
         'http://localhost:3000',
-        'https://new-frontend-camparino-week.up.railway.app',
-        'https://campari-lottery-git-main-nicola-scarpas-projects.vercel.app',
-        'https://campari-lottery.vercel.app',
         'https://www.camparinoweek.com',
         'https://camparinoweek.com'
     ];
@@ -160,23 +161,36 @@ app.get('/health', (req, res) => {
 // ==========================================
 // 1. AUTHENTICATION (Login / Logout / Me)
 // ==========================================
-app.post('/api/auth/login', authLimiter, async (req, res) => {
+// Login per staff/admin (risolve tenant da request)
+app.post('/api/auth/login', authLimiter, tenantMiddleware_1.resolveTenant, async (req, res) => {
     const { username, password } = req.body;
     try {
-        const user = await prisma.staffUser.findUnique({ where: { username } });
+        // Trova utente nel tenant corrente
+        const user = await prisma.staffUser.findFirst({
+            where: {
+                username,
+                tenantId: req.tenantId
+            }
+        });
         if (!user)
             return res.status(401).json({ error: 'Invalid credentials' });
         const valid = await bcrypt_1.default.compare(password, user.password_hash);
         if (!valid)
             return res.status(401).json({ error: 'Invalid credentials' });
-        const token = jsonwebtoken_1.default.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
+        // Genera token con tenantId
+        const token = (0, authMiddleware_1.generateStaffToken)(user.id, user.username, user.role, user.tenantId);
         res.cookie('token', token, {
             httpOnly: true,
             secure: true,
             sameSite: 'none',
             maxAge: 8 * 3600 * 1000
         });
-        res.json({ success: true, role: user.role, token: token });
+        res.json({
+            success: true,
+            role: user.role,
+            token: token,
+            tenantId: user.tenantId
+        });
     }
     catch (err) {
         console.error(err);
@@ -194,13 +208,333 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/auth/me', authMiddleware_1.authenticateToken, (req, res) => {
     res.json({ user: req.user });
 });
+// Refresh Token - rinnova il JWT (permette refresh anche se scaduto da poco)
+app.post('/api/auth/refresh', authMiddleware_1.authenticateTokenForRefresh, (req, res) => {
+    try {
+        // Se siamo qui, il token è ancora valido (verificato dal middleware)
+        // Generiamo un nuovo token con scadenza estesa
+        const user = req.user;
+        const newToken = jsonwebtoken_1.default.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
+        res.cookie('token', newToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'none',
+            maxAge: 8 * 3600 * 1000
+        });
+        res.json({ success: true, token: newToken });
+    }
+    catch (err) {
+        console.error('Errore refresh token:', err);
+        res.status(500).json({ error: 'Errore durante il refresh del token' });
+    }
+});
+// ==========================================
+// 1B. SUPER ADMIN AUTHENTICATION & ROUTES
+// ==========================================
+// Super Admin Login (no tenant required)
+app.post('/api/superadmin/auth/login', authLimiter, async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const superAdmin = await prisma.superAdmin.findUnique({ where: { username } });
+        if (!superAdmin)
+            return res.status(401).json({ error: 'Invalid credentials' });
+        const valid = await bcrypt_1.default.compare(password, superAdmin.passwordHash);
+        if (!valid)
+            return res.status(401).json({ error: 'Invalid credentials' });
+        const token = (0, authMiddleware_1.generateSuperAdminToken)(superAdmin.id, superAdmin.username, superAdmin.email);
+        res.cookie('superAdminToken', token, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'none',
+            maxAge: 4 * 3600 * 1000 // 4 ore
+        });
+        res.json({ success: true, token, email: superAdmin.email });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Login failed' });
+    }
+});
+// Super Admin: Lista Tenants
+app.get('/api/superadmin/tenants', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    try {
+        const tenants = await prisma.tenant.findMany({
+            include: {
+                _count: {
+                    select: {
+                        promotions: true,
+                        staffUsers: true
+                    }
+                }
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+        res.json(tenants);
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch tenants' });
+    }
+});
+// Super Admin: Crea Tenant
+app.post('/api/superadmin/tenants', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    const { name, slug, subdomain, adminEmail, plan, companyName } = req.body;
+    if (!name || !slug || !subdomain || !adminEmail) {
+        return res.status(400).json({ error: 'Missing required fields: name, slug, subdomain, adminEmail' });
+    }
+    try {
+        // Genera license key
+        const licenseKey = Array.from({ length: 4 }, () => crypto_1.default.randomBytes(2).toString('hex').toUpperCase()).join('-');
+        const tenant = await prisma.tenant.create({
+            data: {
+                name,
+                slug,
+                subdomain,
+                adminEmail,
+                companyName,
+                plan: plan || 'starter',
+                licenseKey,
+                licenseStatus: 'trial',
+                licenseEnd: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 giorni trial
+            }
+        });
+        // Crea branding e content di default
+        await prisma.tenantBranding.create({
+            data: { tenantId: tenant.id }
+        });
+        await prisma.tenantContent.create({
+            data: { tenantId: tenant.id, language: 'it' }
+        });
+        res.json({ success: true, tenant });
+    }
+    catch (err) {
+        console.error(err);
+        if (err.code === 'P2002') {
+            return res.status(400).json({ error: 'Slug or subdomain already exists' });
+        }
+        res.status(500).json({ error: 'Failed to create tenant' });
+    }
+});
+// Super Admin: Aggiorna Tenant
+app.put('/api/superadmin/tenants/:id', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    const updateData = req.body;
+    try {
+        const tenant = await prisma.tenant.update({
+            where: { id },
+            data: updateData
+        });
+        res.json({ success: true, tenant });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update tenant' });
+    }
+});
+// Super Admin: Attiva Licenza
+app.post('/api/superadmin/tenants/:id/activate', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { plan, durationDays } = req.body;
+    try {
+        const tenant = await prisma.tenant.update({
+            where: { id },
+            data: {
+                licenseStatus: 'active',
+                plan: plan || 'pro',
+                licenseStart: new Date(),
+                licenseEnd: new Date(Date.now() + (durationDays || 365) * 24 * 60 * 60 * 1000)
+            }
+        });
+        res.json({ success: true, tenant });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to activate license' });
+    }
+});
+// Super Admin: Sospendi Tenant
+app.post('/api/superadmin/tenants/:id/suspend', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    try {
+        const tenant = await prisma.tenant.update({
+            where: { id },
+            data: { licenseStatus: 'suspended' }
+        });
+        res.json({ success: true, tenant });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to suspend tenant' });
+    }
+});
+// Super Admin: Analytics cross-tenant
+app.get('/api/superadmin/analytics', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    try {
+        const [tenantCount, totalPromotions, totalTokens, totalPlays] = await Promise.all([
+            prisma.tenant.count(),
+            prisma.promotion.count(),
+            prisma.token.count(),
+            prisma.play.count()
+        ]);
+        const tenantsByPlan = await prisma.tenant.groupBy({
+            by: ['plan'],
+            _count: { id: true }
+        });
+        const tenantsByStatus = await prisma.tenant.groupBy({
+            by: ['licenseStatus'],
+            _count: { id: true }
+        });
+        res.json({
+            tenantCount,
+            totalPromotions,
+            totalTokens,
+            totalPlays,
+            tenantsByPlan,
+            tenantsByStatus
+        });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch analytics' });
+    }
+});
+// Super Admin: Rinnova licenza
+app.post('/api/superadmin/tenants/:id/renew', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { additionalDays } = req.body;
+    if (!additionalDays || additionalDays < 1) {
+        return res.status(400).json({ error: 'additionalDays must be a positive number' });
+    }
+    try {
+        const tenant = await LicenseService_1.LicenseService.renewLicense(id, additionalDays);
+        res.json({ success: true, tenant });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message || 'Failed to renew license' });
+    }
+});
+// Super Admin: Upgrade piano
+app.post('/api/superadmin/tenants/:id/upgrade', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { plan, extendDays } = req.body;
+    if (!plan || !LicenseService_1.PLAN_DEFINITIONS[plan]) {
+        return res.status(400).json({
+            error: 'Invalid plan',
+            availablePlans: Object.keys(LicenseService_1.PLAN_DEFINITIONS)
+        });
+    }
+    try {
+        const tenant = await LicenseService_1.LicenseService.upgradePlan(id, plan, extendDays || 0);
+        res.json({ success: true, tenant });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message || 'Failed to upgrade plan' });
+    }
+});
+// Super Admin: Riattiva licenza sospesa
+app.post('/api/superadmin/tenants/:id/reactivate', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    try {
+        const tenant = await LicenseService_1.LicenseService.reactivateLicense(id);
+        res.json({ success: true, tenant });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message || 'Failed to reactivate license' });
+    }
+});
+// Super Admin: Impersona Tenant Admin
+app.post('/api/superadmin/tenants/:id/impersonate', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    try {
+        // Verifica che il tenant esista
+        const tenant = await prisma.tenant.findUnique({
+            where: { id }
+        });
+        if (!tenant) {
+            return res.status(404).json({ error: 'Tenant not found' });
+        }
+        // Trova un admin user per questo tenant (o crea un token "virtuale")
+        const adminUser = await prisma.staffUser.findFirst({
+            where: { tenantId: id, role: 'admin' }
+        });
+        // Genera un token JWT con i dati necessari per impersonare
+        const impersonationToken = jsonwebtoken_1.default.sign({
+            id: adminUser?.id || 0,
+            username: adminUser?.username || `superadmin_as_${tenant.slug}`,
+            role: 'admin',
+            tenantId: tenant.id,
+            tenantSlug: tenant.slug,
+            isImpersonation: true, // Flag per identificare sessioni impersonate
+            impersonatedBy: 'superadmin'
+        }, process.env.JWT_SECRET || 'dev-secret', { expiresIn: '2h' } // Token più breve per sicurezza
+        );
+        res.json({
+            success: true,
+            token: impersonationToken,
+            tenant: {
+                id: tenant.id,
+                name: tenant.name,
+                slug: tenant.slug,
+                subdomain: tenant.subdomain
+            },
+            redirectUrl: `/admin/dashboard`
+        });
+    }
+    catch (err) {
+        console.error('Impersonation error:', err);
+        res.status(500).json({ error: err.message || 'Failed to impersonate tenant' });
+    }
+});
+// Super Admin: Lista licenze in scadenza
+app.get('/api/superadmin/licenses/expiring', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    const daysAhead = Number(req.query.days) || 30;
+    try {
+        const tenants = await LicenseService_1.LicenseService.findExpiringLicenses(daysAhead);
+        res.json({
+            daysAhead,
+            count: tenants.length,
+            tenants: tenants.map(t => ({
+                id: t.id,
+                name: t.name,
+                slug: t.slug,
+                plan: t.plan,
+                licenseStatus: t.licenseStatus,
+                licenseEnd: t.licenseEnd,
+                adminEmail: t.adminEmail
+            }))
+        });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch expiring licenses' });
+    }
+});
+// Super Admin: Aggiorna licenze scadute (batch job manuale)
+app.post('/api/superadmin/licenses/update-expired', authMiddleware_1.authenticateSuperAdmin, async (req, res) => {
+    try {
+        const count = await LicenseService_1.LicenseService.updateExpiredLicenses();
+        res.json({ success: true, updatedCount: count });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update expired licenses' });
+    }
+});
+// Super Admin: Dettagli piano disponibili
+app.get('/api/superadmin/plans', authMiddleware_1.authenticateSuperAdmin, (req, res) => {
+    res.json(LicenseService_1.PLAN_DEFINITIONS);
+});
 // ==========================================
 // 2. ADMIN: PROMOTIONS MANAGEMENT (CRUD)
 // ==========================================
-// Lista Promozioni
-app.get('/api/promotions/list', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+// Lista Promozioni (filtrate per tenant)
+app.get('/api/promotions/list', tenantMiddleware_1.resolveTenant, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     try {
         const promotions = await prisma.promotion.findMany({
+            where: { tenantId: req.tenantId },
             orderBy: { created_at: 'desc' }
         });
         res.json(promotions);
@@ -209,8 +543,8 @@ app.get('/api/promotions/list', authMiddleware_1.authenticateToken, (0, authMidd
         res.status(500).json({ error: 'Errore recupero promozioni' });
     }
 });
-// Crea Promozione
-app.post('/api/promotions/create', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+// Crea Promozione (con tenant e validazione licenza)
+app.post('/api/promotions/create', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), (0, licenseMiddleware_1.checkPlanLimit)('promotions'), async (req, res) => {
     const { name, plannedTokenCount, startDatetime, endDatetime } = req.body;
     // Validazione input
     if (!name || !plannedTokenCount || !startDatetime || !endDatetime) {
@@ -225,17 +559,48 @@ app.post('/api/promotions/create', authMiddleware_1.authenticateToken, (0, authM
     if (startDate >= endDate) {
         return res.status(400).json({ error: 'La data di fine deve essere successiva alla data di inizio' });
     }
+    // Verifica limite token per promozione
+    const tokenCount = Number(plannedTokenCount);
+    if (req.tenant && tokenCount > req.tenant.maxTokensPerPromo) {
+        return res.status(403).json({
+            error: 'Plan limit reached',
+            message: `Your plan allows a maximum of ${req.tenant.maxTokensPerPromo} tokens per promotion.`,
+            limit: req.tenant.maxTokensPerPromo,
+            requested: tokenCount
+        });
+    }
     try {
+        // Crea la promozione con tenantId
         const promo = await prisma.promotion.create({
             data: {
+                tenantId: req.tenantId,
                 name,
-                planned_token_count: Number(plannedTokenCount),
+                planned_token_count: tokenCount,
                 start_datetime: startDate,
                 end_datetime: endDate,
                 status: 'DRAFT'
             }
         });
-        res.json({ success: true, promotion: promo });
+        // Genera automaticamente i token
+        if (tokenCount > 0) {
+            const codesToCreate = [];
+            for (let i = 0; i < tokenCount; i++) {
+                const code = crypto_1.default.randomBytes(4).toString('hex').toUpperCase();
+                codesToCreate.push({
+                    promotion_id: promo.id,
+                    token_code: code,
+                    status: 'available'
+                });
+            }
+            await prisma.token.createMany({
+                data: codesToCreate
+            });
+        }
+        res.json({
+            success: true,
+            promotion: promo,
+            tokensGenerated: tokenCount
+        });
     }
     catch (err) {
         console.error(err);
@@ -243,7 +608,7 @@ app.post('/api/promotions/create', authMiddleware_1.authenticateToken, (0, authM
     }
 });
 // Aggiorna Promozione
-app.put('/api/promotions/update/:id', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.put('/api/promotions/update/:id', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { id } = req.params;
     const { name, plannedTokenCount, status, start_datetime, end_datetime } = req.body;
     // Validazione date se fornite
@@ -275,7 +640,7 @@ app.put('/api/promotions/update/:id', authMiddleware_1.authenticateToken, (0, au
     }
 });
 // Elimina Promozione (con cascade completo)
-app.delete('/api/promotions/delete/:id', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.delete('/api/promotions/delete/:id', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { id } = req.params;
     const pid = Number(id);
     try {
@@ -303,10 +668,147 @@ app.delete('/api/promotions/delete/:id', authMiddleware_1.authenticateToken, (0,
         res.status(500).json({ error: 'Errore eliminazione promozione' });
     }
 });
+// GET singola promozione (per settings)
+app.get('/api/promotions/:id', tenantMiddleware_1.resolveTenant, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { id } = req.params;
+    try {
+        const promotion = await prisma.promotion.findFirst({
+            where: { id: Number(id), tenantId: req.tenantId }
+        });
+        if (!promotion) {
+            return res.status(404).json({ error: 'Promozione non trovata' });
+        }
+        res.json(promotion);
+    }
+    catch (err) {
+        console.error('Errore recupero promozione:', err);
+        res.status(500).json({ error: 'Errore recupero promozione' });
+    }
+});
+// PUT Leaderboard settings
+app.put('/api/promotions/:id/leaderboard', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { id } = req.params;
+    const { leaderboard_enabled, leaderboard_show_names, leaderboard_show_prizes, leaderboard_style, leaderboard_size } = req.body;
+    try {
+        const promotion = await prisma.promotion.updateMany({
+            where: { id: Number(id), tenantId: req.tenantId },
+            data: {
+                leaderboard_enabled: leaderboard_enabled ?? false,
+                leaderboard_show_names: leaderboard_show_names ?? true,
+                leaderboard_show_prizes: leaderboard_show_prizes ?? false,
+                leaderboard_style: leaderboard_style || 'minimal',
+                leaderboard_size: leaderboard_size || 10
+            }
+        });
+        if (promotion.count === 0) {
+            return res.status(404).json({ error: 'Promozione non trovata' });
+        }
+        res.json({ success: true });
+    }
+    catch (err) {
+        console.error('Errore aggiornamento leaderboard:', err);
+        res.status(500).json({ error: 'Errore aggiornamento leaderboard' });
+    }
+});
+// GET Engine config
+app.get('/api/promotions/:id/engine-config', tenantMiddleware_1.resolveTenant, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { id } = req.params;
+    try {
+        // Verifica che la promozione appartenga al tenant
+        const promotion = await prisma.promotion.findFirst({
+            where: { id: Number(id), tenantId: req.tenantId }
+        });
+        if (!promotion) {
+            return res.status(404).json({ error: 'Promozione non trovata' });
+        }
+        const config = await prisma.promotionEngineConfig.findUnique({
+            where: { promotionId: Number(id) }
+        });
+        // Se non esiste, ritorna i valori di default
+        if (!config) {
+            return res.json({
+                promotionId: Number(id),
+                // Fatigue defaults
+                fatigueEnabled: true,
+                fatiguePlayThreshold: 6,
+                fatiguePlayBasePenalty: 0.10,
+                fatiguePlayIncrement: 0.02,
+                fatiguePlayMax: 0.50,
+                fatigueWinPenalty: 0.20,
+                fatigueWinMax: 0.60,
+                fatigueMinProbability: 0.10,
+                // Pacing defaults
+                pacingEnabled: true,
+                pacingTooFastThreshold: 1.30,
+                pacingTooFastMultiplier: 0.60,
+                pacingFastThreshold: 1.15,
+                pacingFastMultiplier: 0.80,
+                pacingSlowThreshold: 0.85,
+                pacingSlowMultiplier: 1.20,
+                pacingTooSlowThreshold: 0.70,
+                pacingTooSlowMultiplier: 1.40,
+                // Time Pressure defaults
+                timePressureEnabled: true,
+                timeConservationStartMin: 60,
+                timeDistributionStartMin: 5,
+                timeFinalStartMin: 1,
+                timeConservationMin: 0.30,
+                timeConservationMax: 0.80,
+                timeConservationBoost: 1.30,
+                timeDistributionMin: 1.50,
+                timeDistributionMax: 5.00,
+                timeFinalBoost: 10.00,
+                // Force Win
+                forceWinEnabled: false,
+                forceWinThresholdMin: 1,
+                // Desperation
+                desperationModeEnabled: false,
+                desperationStartMin: 5,
+                // Global
+                maxProbability: 1.00,
+                minProbability: 0.001,
+                loggingEnabled: false
+            });
+        }
+        res.json(config);
+    }
+    catch (err) {
+        console.error('Errore recupero engine config:', err);
+        res.status(500).json({ error: 'Errore recupero config' });
+    }
+});
+// PUT Engine config
+app.put('/api/promotions/:id/engine-config', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { id } = req.params;
+    const configData = req.body;
+    try {
+        // Verifica che la promozione appartenga al tenant
+        const promotion = await prisma.promotion.findFirst({
+            where: { id: Number(id), tenantId: req.tenantId }
+        });
+        if (!promotion) {
+            return res.status(404).json({ error: 'Promozione non trovata' });
+        }
+        // Upsert: crea o aggiorna la configurazione
+        const config = await prisma.promotionEngineConfig.upsert({
+            where: { promotionId: Number(id) },
+            update: configData,
+            create: {
+                promotionId: Number(id),
+                ...configData
+            }
+        });
+        res.json({ success: true, config });
+    }
+    catch (err) {
+        console.error('Errore aggiornamento engine config:', err);
+        res.status(500).json({ error: 'Errore aggiornamento config' });
+    }
+});
 // ==========================================
 // 3. ADMIN: PRIZES MANAGEMENT
 // ==========================================
-app.get('/api/admin/prizes/:promotionId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.get('/api/admin/prizes/:promotionId', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId } = req.params;
     try {
         const prizes = await prisma.prizeType.findMany({
@@ -320,10 +822,15 @@ app.get('/api/admin/prizes/:promotionId', authMiddleware_1.authenticateToken, (0
     }
 });
 // Aggiungi singolo premio
-app.post('/api/admin/prizes/add', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
-    const { promotionId, name, initialStock } = req.body;
+app.post('/api/admin/prizes/add', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { promotionId, name, initialStock, genderRestriction } = req.body;
     if (!promotionId || !name || !initialStock) {
         return res.status(400).json({ error: 'Campi mancanti: promotionId, name, initialStock sono obbligatori' });
+    }
+    // Valida genderRestriction se fornito
+    const validGenderValues = ['F', 'M', null, '', undefined];
+    if (genderRestriction && !['F', 'M'].includes(genderRestriction)) {
+        return res.status(400).json({ error: 'genderRestriction deve essere "F", "M" o vuoto' });
     }
     try {
         const prize = await prisma.prizeType.create({
@@ -332,7 +839,8 @@ app.post('/api/admin/prizes/add', authMiddleware_1.authenticateToken, (0, authMi
                 name: name.trim(),
                 initial_stock: Number(initialStock),
                 remaining_stock: Number(initialStock),
-                target_overall_probability: 0
+                target_overall_probability: 0,
+                gender_restriction: genderRestriction || null
             }
         });
         res.json({ success: true, prize });
@@ -342,7 +850,7 @@ app.post('/api/admin/prizes/add', authMiddleware_1.authenticateToken, (0, authMi
         res.status(500).json({ error: 'Errore creazione premio' });
     }
 });
-app.post('/api/admin/prizes/update', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.post('/api/admin/prizes/update', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId, prizeTypes } = req.body;
     try {
         for (const p of prizeTypes) {
@@ -377,9 +885,9 @@ app.post('/api/admin/prizes/update', authMiddleware_1.authenticateToken, (0, aut
     }
 });
 // Modifica stock di un singolo premio
-app.put('/api/admin/prizes/:prizeId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.put('/api/admin/prizes/:prizeId', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { prizeId } = req.params;
-    const { initial_stock, remaining_stock } = req.body;
+    const { initial_stock, remaining_stock, gender_restriction } = req.body;
     try {
         const prize = await prisma.prizeType.findUnique({
             where: { id: Number(prizeId) }
@@ -387,12 +895,20 @@ app.put('/api/admin/prizes/:prizeId', authMiddleware_1.authenticateToken, (0, au
         if (!prize) {
             return res.status(404).json({ error: 'Premio non trovato' });
         }
+        // Valida gender_restriction se fornito
+        if (gender_restriction !== undefined && gender_restriction !== null && gender_restriction !== '' && !['F', 'M'].includes(gender_restriction)) {
+            return res.status(400).json({ error: 'gender_restriction deve essere "F", "M" o vuoto' });
+        }
         const updateData = {};
         if (initial_stock !== undefined) {
             updateData.initial_stock = Number(initial_stock);
         }
         if (remaining_stock !== undefined) {
             updateData.remaining_stock = Number(remaining_stock);
+        }
+        if (gender_restriction !== undefined) {
+            // Se e' stringa vuota o null, imposta null
+            updateData.gender_restriction = gender_restriction === '' ? null : gender_restriction;
         }
         const updated = await prisma.prizeType.update({
             where: { id: Number(prizeId) },
@@ -406,7 +922,7 @@ app.put('/api/admin/prizes/:prizeId', authMiddleware_1.authenticateToken, (0, au
     }
 });
 // Reset stock di un premio (remaining = initial)
-app.put('/api/admin/prizes/:prizeId/reset', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.put('/api/admin/prizes/:prizeId/reset', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { prizeId } = req.params;
     try {
         const prize = await prisma.prizeType.findUnique({
@@ -431,7 +947,7 @@ app.put('/api/admin/prizes/:prizeId/reset', authMiddleware_1.authenticateToken, 
     }
 });
 // Elimina un premio
-app.delete('/api/admin/prizes/:prizeId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.delete('/api/admin/prizes/:prizeId', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { prizeId } = req.params;
     try {
         // Verifica se il premio ha assegnazioni
@@ -456,7 +972,7 @@ app.delete('/api/admin/prizes/:prizeId', authMiddleware_1.authenticateToken, (0,
 // ==========================================
 // 4. ADMIN: STATS & LOGS (CORRETTO QUI)
 // ==========================================
-app.get('/api/admin/stats/:promotionId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.get('/api/admin/stats/:promotionId', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId } = req.params;
     const pid = Number(promotionId);
     try {
@@ -497,7 +1013,143 @@ app.get('/api/admin/stats/:promotionId', authMiddleware_1.authenticateToken, (0,
         res.status(500).json({ error: 'Errore statistiche' });
     }
 });
-app.get('/api/admin/play-logs/:promotionId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+// Revenue Stats endpoint
+const SALE_PRICE = 3.00; // Prezzo vendita Campari Soda
+const UNIT_COST = 0.84; // Costo acquisto
+// Helper functions per fuso orario italiano (Europe/Rome)
+function getItalianDateString(date) {
+    // Ritorna data in formato YYYY-MM-DD nel fuso orario italiano
+    return date.toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' }); // sv-SE usa formato ISO
+}
+function getItalianHour(date) {
+    // Ritorna l'ora (0-23) nel fuso orario italiano
+    const hourStr = date.toLocaleString('en-US', {
+        timeZone: 'Europe/Rome',
+        hour: 'numeric',
+        hour12: false
+    });
+    return parseInt(hourStr, 10);
+}
+app.get('/api/admin/revenue/:promotionId', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { promotionId } = req.params;
+    const { date } = req.query; // Opzionale: filtra per giorno specifico
+    const pid = Number(promotionId);
+    try {
+        // 1. Recupera info promozione per date inizio/fine
+        const promotion = await prisma.promotion.findUnique({
+            where: { id: pid },
+            select: { start_datetime: true, end_datetime: true }
+        });
+        if (!promotion) {
+            return res.status(404).json({ error: 'Promozione non trovata' });
+        }
+        // 2. Costruisci filtro date
+        const dateFilter = {};
+        if (date) {
+            // Filtra per giorno specifico
+            const dayStart = new Date(date);
+            dayStart.setHours(0, 0, 0, 0);
+            const dayEnd = new Date(date);
+            dayEnd.setHours(23, 59, 59, 999);
+            dateFilter.used_at = { gte: dayStart, lte: dayEnd };
+        }
+        // 3. Conteggio totale token utilizzati
+        const unitsSold = await prisma.token.count({
+            where: {
+                promotion_id: pid,
+                status: 'used',
+                ...dateFilter
+            }
+        });
+        // 4. Calcoli finanziari
+        const totalRevenue = unitsSold * SALE_PRICE;
+        const totalCost = unitsSold * UNIT_COST;
+        const grossMargin = totalRevenue - totalCost;
+        const marginPercentage = totalRevenue > 0 ? (grossMargin / totalRevenue) * 100 : 0;
+        // 5. Aggregazione giornaliera - usando Prisma invece di raw SQL per compatibilità SQLite/PostgreSQL
+        const usedTokens = await prisma.token.findMany({
+            where: {
+                promotion_id: pid,
+                status: 'used',
+                used_at: { not: null }
+            },
+            select: { used_at: true }
+        });
+        // Raggruppa per data manualmente (usando fuso orario italiano)
+        const dailyMap = new Map();
+        usedTokens.forEach(token => {
+            if (token.used_at) {
+                const dateKey = getItalianDateString(token.used_at);
+                dailyMap.set(dateKey, (dailyMap.get(dateKey) || 0) + 1);
+            }
+        });
+        // Converti in array ordinato
+        const dailySalesRaw = Array.from(dailyMap.entries())
+            .map(([date, units]) => ({ date, units }))
+            .sort((a, b) => a.date.localeCompare(b.date));
+        // Calcola variazione rispetto al giorno precedente
+        const dailySales = dailySalesRaw.map((day, index) => {
+            const units = day.units;
+            const revenue = units * SALE_PRICE;
+            let vsYesterday = null;
+            if (index > 0) {
+                const yesterdayUnits = dailySalesRaw[index - 1].units;
+                if (yesterdayUnits > 0) {
+                    vsYesterday = ((units - yesterdayUnits) / yesterdayUnits) * 100;
+                }
+            }
+            return {
+                date: day.date,
+                units,
+                revenue,
+                vsYesterday
+            };
+        });
+        // 6. Media giornaliera (solo giorni con vendite)
+        const daysWithSales = dailySales.length;
+        const dailyAverage = daysWithSales > 0 ? unitsSold / daysWithSales : 0;
+        const dailyAverageRevenue = daysWithSales > 0 ? totalRevenue / daysWithSales : 0;
+        // 7. Distribuzione oraria - raggruppa per ora manualmente (fuso orario italiano)
+        const hourlyMap = new Map();
+        // Filtra per data se specificata (usando fuso orario italiano)
+        const tokensForHourly = date
+            ? usedTokens.filter(t => t.used_at && getItalianDateString(t.used_at) === date)
+            : usedTokens;
+        tokensForHourly.forEach(token => {
+            if (token.used_at) {
+                const hour = getItalianHour(token.used_at);
+                hourlyMap.set(hour, (hourlyMap.get(hour) || 0) + 1);
+            }
+        });
+        // Crea array completo 0-23 ore
+        const hourlyDistribution = Array.from({ length: 24 }, (_, i) => ({
+            hour: i,
+            count: hourlyMap.get(i) || 0
+        }));
+        res.json({
+            summary: {
+                unitsSold,
+                totalRevenue,
+                totalCost,
+                grossMargin,
+                marginPercentage,
+                dailyAverage,
+                dailyAverageRevenue
+            },
+            dailySales,
+            hourlyDistribution,
+            promotion: {
+                startDate: promotion.start_datetime.toISOString(),
+                endDate: promotion.end_datetime.toISOString()
+            }
+        });
+    }
+    catch (err) {
+        console.error('Errore revenue stats:', err);
+        res.status(500).json({ error: 'Errore nel calcolo revenue' });
+    }
+});
+app.get('/api/admin/play-logs/:promotionId', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId } = req.params;
     try {
         const logs = await prisma.play.findMany({
@@ -529,15 +1181,16 @@ app.get('/api/admin/play-logs/:promotionId', authMiddleware_1.authenticateToken,
         res.status(500).json({ error: 'Errore logs' });
     }
 });
-app.get('/api/admin/tokens/:promotionId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.get('/api/admin/tokens/:promotionId', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId } = req.params;
     const { page = 1, limit = 50, search = '' } = req.query;
     const pid = Number(promotionId);
     const searchStr = String(search);
     try {
-        // Definisci il filtro where una volta sola
+        // Definisci il filtro where - SOLO token disponibili (non usati)
         const whereClause = {
             promotion_id: pid,
+            status: 'available', // Fix: mostra solo token disponibili
             ...(searchStr && { token_code: { contains: searchStr } })
         };
         // Esegui query e count in parallelo per efficienza
@@ -566,7 +1219,7 @@ app.get('/api/admin/tokens/:promotionId', authMiddleware_1.authenticateToken, (0
     }
 });
 // Token Utilizzati con dettagli giocata (per sezione "Ultimi Token Utilizzati")
-app.get('/api/admin/used-tokens/:promotionId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.get('/api/admin/used-tokens/:promotionId', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId } = req.params;
     const { page = 1, limit = 10 } = req.query;
     const pid = Number(promotionId);
@@ -638,7 +1291,7 @@ app.get('/api/admin/used-tokens/:promotionId', authMiddleware_1.authenticateToke
     }
 });
 // Lista Clienti registrati per una promozione (Archivio Giocatori)
-app.get('/api/admin/customers/:promotionId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.get('/api/admin/customers/:promotionId', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId } = req.params;
     const { page = 1, limit = 20, search = '' } = req.query;
     const pid = Number(promotionId);
@@ -701,7 +1354,7 @@ app.get('/api/admin/customers/:promotionId', authMiddleware_1.authenticateToken,
     }
 });
 // Export CSV di tutti i clienti di una promozione
-app.get('/api/admin/customers/:promotionId/export', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.get('/api/admin/customers/:promotionId/export', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId } = req.params;
     const pid = Number(promotionId);
     try {
@@ -743,7 +1396,7 @@ app.get('/api/admin/customers/:promotionId/export', authMiddleware_1.authenticat
     }
 });
 // Reset Token - Elimina tutti i token e le giocate di una promozione
-app.delete('/api/admin/tokens/reset/:promotionId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.delete('/api/admin/tokens/reset/:promotionId', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId } = req.params;
     const pid = Number(promotionId);
     if (!pid || isNaN(pid)) {
@@ -795,12 +1448,46 @@ app.delete('/api/admin/tokens/reset/:promotionId', authMiddleware_1.authenticate
         res.status(500).json({ error: 'Errore durante il reset dei token' });
     }
 });
+// Helper: Fetch tenant branding for PDF generation
+async function getTenantBrandingForPdf(tenantId) {
+    const branding = await prisma.tenantBranding.findUnique({
+        where: { tenantId }
+    });
+    const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId }
+    });
+    return {
+        primaryColor: branding?.colorPrimary || tenant?.primaryColor || '#b42a28',
+        secondaryColor: branding?.colorSecondary || tenant?.secondaryColor || '#f3efe6',
+        logoUrl: branding?.logoMainUrl || null
+    };
+}
+// Helper: Download image from URL for PDF embedding
+async function downloadImageForPdf(url) {
+    try {
+        const response = await fetch(url);
+        if (!response.ok)
+            return null;
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+    }
+    catch (e) {
+        console.error('Failed to download image for PDF:', e);
+        return null;
+    }
+}
 // Generazione PDF Token (Layout Verticale 50x80mm con Pattern)
-app.post('/api/admin/generate-tokens', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.post('/api/admin/generate-tokens', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId, count, prefix } = req.body;
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const path = require('path');
     try {
+        // Fetch tenant branding
+        const brandingConfig = await getTenantBrandingForPdf(req.tenantId);
+        let logoBuffer = null;
+        if (brandingConfig.logoUrl) {
+            logoBuffer = await downloadImageForPdf(brandingConfig.logoUrl);
+        }
         const codesToCreate = [];
         for (let i = 0; i < count; i++) {
             const code = (prefix || '') + crypto_1.default.randomBytes(4).toString('hex').toUpperCase();
@@ -851,12 +1538,12 @@ app.post('/api/admin/generate-tokens', authMiddleware_1.authenticateToken, (0, a
                 const mirroredCol = (COLUMNS - 1) - col;
                 const x = START_X + (mirroredCol * CARD_W);
                 const y = START_Y + (row * CARD_H);
-                // Immagine retro scalata a 50x80mm
+                // Immagine retro scalata a 50x80mm (usa colore tenant come fallback)
                 try {
                     doc.image(BACK_TEMPLATE, x, y, { width: CARD_W, height: CARD_H });
                 }
                 catch (e) {
-                    doc.rect(x, y, CARD_W, CARD_H).fill('#D31418');
+                    doc.rect(x, y, CARD_W, CARD_H).fill(brandingConfig.primaryColor);
                 }
                 // Linea di taglio tratteggiata
                 doc.save();
@@ -881,7 +1568,22 @@ app.post('/api/admin/generate-tokens', authMiddleware_1.authenticateToken, (0, a
                     doc.image(FRONT_TEMPLATE, x, y, { width: CARD_W, height: CARD_H });
                 }
                 catch (e) {
-                    doc.rect(x, y, CARD_W, CARD_H).fill('white');
+                    // Fallback: Card dinamica con colori tenant
+                    doc.rect(x, y, CARD_W, CARD_H).fill(brandingConfig.secondaryColor);
+                    // Header con colore primario
+                    doc.rect(x, y, CARD_W, CARD_H * 0.25).fill(brandingConfig.primaryColor);
+                    // Logo tenant se disponibile
+                    if (logoBuffer) {
+                        try {
+                            const logoSize = CARD_W * 0.6;
+                            const logoX = x + (CARD_W - logoSize) / 2;
+                            const logoY = y + (CARD_H * 0.25 - logoSize / 2) / 2 + 5;
+                            doc.image(logoBuffer, logoX, logoY, { width: logoSize, fit: [logoSize, CARD_H * 0.2] });
+                        }
+                        catch (logoErr) {
+                            // Ignore logo errors
+                        }
+                    }
                 }
                 // 2. QR Code centrato verticalmente (nella zona centrale del template)
                 const playUrl = `${APP_URL}/play?token=${token.token_code}`;
@@ -925,11 +1627,17 @@ app.post('/api/admin/generate-tokens', authMiddleware_1.authenticateToken, (0, a
     }
 });
 // Download PDF dei Token Esistenti (Layout Verticale 50x80mm con Pattern)
-app.get('/api/admin/tokens/pdf/:promotionId', authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+app.get('/api/admin/tokens/pdf/:promotionId', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
     const { promotionId } = req.params;
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const path = require('path');
     try {
+        // Fetch tenant branding
+        const brandingConfig = await getTenantBrandingForPdf(req.tenantId);
+        let logoBuffer = null;
+        if (brandingConfig.logoUrl) {
+            logoBuffer = await downloadImageForPdf(brandingConfig.logoUrl);
+        }
         // Recupera tutti i token disponibili per questa promozione
         const tokens = await prisma.token.findMany({
             where: {
@@ -974,12 +1682,12 @@ app.get('/api/admin/tokens/pdf/:promotionId', authMiddleware_1.authenticateToken
                 const mirroredCol = (COLUMNS - 1) - col;
                 const x = START_X + (mirroredCol * CARD_W);
                 const y = START_Y + (row * CARD_H);
-                // Immagine retro scalata a 50x80mm
+                // Immagine retro scalata a 50x80mm (usa colore tenant come fallback)
                 try {
                     doc.image(BACK_TEMPLATE, x, y, { width: CARD_W, height: CARD_H });
                 }
                 catch (e) {
-                    doc.rect(x, y, CARD_W, CARD_H).fill('#D31418');
+                    doc.rect(x, y, CARD_W, CARD_H).fill(brandingConfig.primaryColor);
                 }
                 // Linea di taglio tratteggiata
                 doc.save();
@@ -1004,7 +1712,22 @@ app.get('/api/admin/tokens/pdf/:promotionId', authMiddleware_1.authenticateToken
                     doc.image(FRONT_TEMPLATE, x, y, { width: CARD_W, height: CARD_H });
                 }
                 catch (e) {
-                    doc.rect(x, y, CARD_W, CARD_H).fill('white');
+                    // Fallback: Card dinamica con colori tenant
+                    doc.rect(x, y, CARD_W, CARD_H).fill(brandingConfig.secondaryColor);
+                    // Header con colore primario
+                    doc.rect(x, y, CARD_W, CARD_H * 0.25).fill(brandingConfig.primaryColor);
+                    // Logo tenant se disponibile
+                    if (logoBuffer) {
+                        try {
+                            const logoSize = CARD_W * 0.6;
+                            const logoX = x + (CARD_W - logoSize) / 2;
+                            const logoY = y + (CARD_H * 0.25 - logoSize / 2) / 2 + 5;
+                            doc.image(logoBuffer, logoX, logoY, { width: logoSize, fit: [logoSize, CARD_H * 0.2] });
+                        }
+                        catch (logoErr) {
+                            // Ignore logo errors
+                        }
+                    }
                 }
                 // 2. QR Code centrato verticalmente (nella zona centrale del template)
                 const playUrl = `${APP_URL}/play?token=${token.token_code}`;
@@ -1072,7 +1795,8 @@ app.get('/api/customer/validate-token/:code', async (req, res) => {
             promotionId: token.promotion_id,
             promotionName: token.promotion.name,
             termsUrl: token.promotion.terms_url,
-            privacyUrl: token.promotion.privacy_url
+            privacyUrl: token.promotion.privacy_url,
+            leaderboardEnabled: token.promotion.leaderboard_enabled ?? true
         });
     }
     catch (err) {
@@ -1159,6 +1883,8 @@ app.post('/api/customer/register', registrationLimiter, async (req, res) => {
         return res.status(400).json({ error: 'Formato numero di telefono non valido' });
     }
     const sanitizedPhone = sanitizePhoneNumber(phoneNumber);
+    // Rileva genere dal nome
+    const genderResult = (0, genderDetection_1.detectGender)(firstName);
     try {
         const customer = await prisma.customer.upsert({
             where: {
@@ -1170,6 +1896,7 @@ app.post('/api/customer/register', registrationLimiter, async (req, res) => {
             update: {
                 first_name: firstName,
                 last_name: lastName,
+                detected_gender: genderResult.gender,
                 consent_marketing: consentMarketing,
                 marketing_consent_at: consentMarketing ? new Date() : undefined,
                 consent_terms: consentTerms,
@@ -1180,6 +1907,7 @@ app.post('/api/customer/register', registrationLimiter, async (req, res) => {
                 first_name: firstName,
                 last_name: lastName,
                 phone_number: sanitizedPhone,
+                detected_gender: genderResult.gender,
                 consent_marketing: consentMarketing || false,
                 consent_terms: consentTerms || false,
                 marketing_consent_at: consentMarketing ? new Date() : null,
@@ -1237,17 +1965,47 @@ app.post('/api/customer/play', playLimiter, authMiddleware_1.authenticateCustome
             const prizeTypes = await tx.prizeType.findMany({
                 where: { promotion_id: promotionId }
             });
-            const engine = new ProbabilityEngine_1.ProbabilityEngine();
-            const wonPrizeType = engine.determineOutcome({
+            // Recupera statistiche customer per fatigue factor
+            const customerStats = await tx.customer.findUnique({
+                where: { id: customer_id },
+                select: {
+                    first_name: true,
+                    total_plays: true,
+                    total_wins: true,
+                    detected_gender: true
+                }
+            });
+            if (!customerStats)
+                throw new Error('CUSTOMER_NOT_FOUND');
+            // Conta premi gia' assegnati in questa promozione (per pacing)
+            const prizesAssignedTotal = await tx.prizeAssignment.count({
+                where: { promotion_id: promotionId }
+            });
+            // Prepara input per il nuovo engine v2.1 (con time pressure)
+            const engineInput = {
                 totalTokens,
                 usedTokens,
                 prizeTypes: prizeTypes.map(p => ({
                     id: p.id,
+                    name: p.name,
                     initialStock: p.initial_stock,
                     remainingStock: p.remaining_stock,
-                    targetProbability: p.target_overall_probability || 0
-                }))
-            });
+                    genderRestriction: p.gender_restriction
+                })),
+                customer: {
+                    firstName: customerStats.first_name,
+                    totalPlays: customerStats.total_plays,
+                    totalWins: customerStats.total_wins,
+                    detectedGender: customerStats.detected_gender
+                },
+                prizesAssignedTotal,
+                // Time pressure: passa le date della promozione
+                promotionStartTime: token.promotion.start_datetime,
+                promotionEndTime: token.promotion.end_datetime
+            };
+            // Esegui estrazione con engine v2.1
+            const outcome = ProbabilityEngine_1.probabilityEngine.determineOutcome(engineInput);
+            const wonPrizeType = outcome.winner ? outcome.prize : null;
             let prizeAssignment = null;
             let isWinner = false;
             if (wonPrizeType) {
@@ -1314,9 +2072,17 @@ app.post('/api/customer/play', playLimiter, authMiddleware_1.authenticateCustome
                     used_at: new Date()
                 }
             });
+            // Aggiorna statistiche customer
             await tx.customer.update({
                 where: { id: customer_id },
-                data: { total_plays: { increment: 1 } }
+                data: {
+                    total_plays: { increment: 1 },
+                    // Se ha vinto, incrementa anche total_wins e last_win_at
+                    ...(isWinner && {
+                        total_wins: { increment: 1 },
+                        last_win_at: new Date()
+                    })
+                }
             });
             return { isWinner, prizeAssignment };
         });
@@ -1330,6 +2096,8 @@ app.post('/api/customer/play', playLimiter, authMiddleware_1.authenticateCustome
             return res.status(400).json({ error: 'Token already used' });
         if (err.message === 'TOKEN_MISMATCH')
             return res.status(400).json({ error: 'Token does not belong to this promotion' });
+        if (err.message === 'CUSTOMER_NOT_FOUND')
+            return res.status(404).json({ error: 'Customer not found' });
         res.status(500).json({ error: 'Transaction failed' });
     }
 });
@@ -1412,7 +2180,7 @@ app.get('/api/leaderboard/:promotionId', async (req, res) => {
 // ==========================================
 // 6. STAFF API
 // ==========================================
-app.post('/api/staff/redeem', authMiddleware_1.authenticateToken, async (req, res) => {
+app.post('/api/staff/redeem', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, async (req, res) => {
     const { prizeCode } = req.body;
     const staffId = req.user?.id; // Recupera l'ID dello staff dal JWT
     if (!prizeCode)
@@ -1469,6 +2237,335 @@ app.post('/api/staff/redeem', authMiddleware_1.authenticateToken, async (req, re
         }
         console.error('Errore redeem:', err);
         res.status(500).json({ error: 'Errore durante il riscatto' });
+    }
+});
+// Admin: Segna premio come riscosso
+app.post('/api/admin/mark-redeemed', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { prizeCode } = req.body;
+    const adminId = req.user?.id;
+    if (!prizeCode)
+        return res.status(400).json({ error: 'Codice premio mancante' });
+    try {
+        const result = await prisma.$transaction(async (tx) => {
+            const assignment = await tx.prizeAssignment.findUnique({
+                where: { prize_code: prizeCode },
+                include: { prize_type: true, customer: true }
+            });
+            if (!assignment) {
+                throw { code: 'NOT_FOUND', message: 'Codice premio non trovato' };
+            }
+            if (assignment.redeemed_at) {
+                throw { code: 'ALREADY_REDEEMED', message: 'Premio già riscosso' };
+            }
+            const updated = await tx.prizeAssignment.update({
+                where: { id: assignment.id },
+                data: {
+                    redeemed_at: new Date(),
+                    redeemed_by_staff_id: adminId
+                },
+                include: { prize_type: true, customer: true }
+            });
+            return {
+                success: true,
+                prizeType: updated.prize_type.name,
+                customer: `${updated.customer.first_name} ${updated.customer.last_name}`,
+                redeemedAt: updated.redeemed_at
+            };
+        });
+        res.json(result);
+    }
+    catch (err) {
+        if (err.code === 'NOT_FOUND')
+            return res.status(404).json({ error: err.message });
+        if (err.code === 'ALREADY_REDEEMED')
+            return res.status(400).json({ error: err.message });
+        console.error('Errore mark-redeemed:', err);
+        res.status(500).json({ error: 'Errore durante il riscatto' });
+    }
+});
+// ==========================================
+// 7. TENANT BRANDING & CONTENT API
+// ==========================================
+// GET Branding pubblico per tenant
+app.get('/api/tenant/branding', tenantMiddleware_1.resolveTenant, async (req, res) => {
+    try {
+        const branding = await prisma.tenantBranding.findUnique({
+            where: { tenantId: req.tenantId }
+        });
+        // Se non esiste, ritorna defaults dal tenant
+        if (!branding && req.tenant) {
+            return res.json({
+                colorPrimary: req.tenant.primaryColor,
+                colorSecondary: req.tenant.secondaryColor,
+                colorAccent: req.tenant.accentColor,
+                logoMainUrl: req.tenant.logoUrl,
+                fontHeading: 'Inter',
+                fontBody: 'Inter'
+            });
+        }
+        res.json(branding);
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch branding' });
+    }
+});
+// PUT Aggiorna branding (solo admin tenant)
+app.put('/api/admin/branding', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    try {
+        const branding = await prisma.tenantBranding.upsert({
+            where: { tenantId: req.tenantId },
+            update: req.body,
+            create: {
+                tenantId: req.tenantId,
+                ...req.body
+            }
+        });
+        res.json({ success: true, branding });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update branding' });
+    }
+});
+// GET Content pubblico per tenant (per lingua)
+app.get('/api/tenant/content/:language?', tenantMiddleware_1.resolveTenant, async (req, res) => {
+    const language = req.params.language || 'it';
+    try {
+        const content = await prisma.tenantContent.findUnique({
+            where: {
+                tenantId_language: {
+                    tenantId: req.tenantId,
+                    language
+                }
+            }
+        });
+        if (!content) {
+            // Ritorna defaults
+            return res.json({
+                language,
+                landingTitle: 'Tenta la fortuna!',
+                landingCtaText: 'Gioca Ora',
+                formTitle: 'Completa la registrazione',
+                winTitle: 'Congratulazioni!',
+                loseTitle: 'Peccato!'
+            });
+        }
+        res.json(content);
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch content' });
+    }
+});
+// PUT Aggiorna content (solo admin tenant)
+app.put('/api/admin/content/:language?', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const language = req.params.language || 'it';
+    try {
+        const content = await prisma.tenantContent.upsert({
+            where: {
+                tenantId_language: {
+                    tenantId: req.tenantId,
+                    language
+                }
+            },
+            update: req.body,
+            create: {
+                tenantId: req.tenantId,
+                language,
+                ...req.body
+            }
+        });
+        res.json({ success: true, content });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update content' });
+    }
+});
+// GET Info tenant pubbliche (per frontend)
+app.get('/api/tenant/info', tenantMiddleware_1.resolveTenant, async (req, res) => {
+    if (!req.tenant) {
+        return res.status(404).json({ error: 'Tenant not found' });
+    }
+    // Ritorna solo info pubbliche
+    res.json({
+        name: req.tenant.name,
+        slug: req.tenant.slug,
+        logoUrl: req.tenant.logoUrl,
+        primaryColor: req.tenant.primaryColor,
+        secondaryColor: req.tenant.secondaryColor,
+        accentColor: req.tenant.accentColor
+    });
+});
+// ==========================================
+// STAFF USER MANAGEMENT
+// ==========================================
+// GET Lista staff users del tenant
+app.get('/api/admin/staff', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    try {
+        const staffUsers = await prisma.staffUser.findMany({
+            where: { tenantId: req.tenantId },
+            select: {
+                id: true,
+                username: true,
+                role: true,
+                created_at: true,
+                _count: {
+                    select: { redeemed_prizes: true }
+                }
+            },
+            orderBy: { created_at: 'desc' }
+        });
+        res.json(staffUsers);
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch staff users' });
+    }
+});
+// POST Crea nuovo staff user
+app.post('/api/admin/staff', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const { username, password, role } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
+    }
+    // Verifica limiti piano
+    const tenant = await prisma.tenant.findUnique({
+        where: { id: req.tenantId },
+        include: { _count: { select: { staffUsers: true } } }
+    });
+    if (tenant && tenant._count.staffUsers >= tenant.maxStaffUsers) {
+        return res.status(403).json({
+            error: `Staff limit reached (${tenant.maxStaffUsers}). Upgrade your plan for more staff users.`
+        });
+    }
+    try {
+        // Verifica username unico
+        const existing = await prisma.staffUser.findUnique({ where: { username } });
+        if (existing) {
+            return res.status(400).json({ error: 'Username already exists' });
+        }
+        const passwordHash = await bcrypt_1.default.hash(password, 10);
+        const staffUser = await prisma.staffUser.create({
+            data: {
+                tenantId: req.tenantId,
+                username,
+                password_hash: passwordHash,
+                role: role || 'staff'
+            },
+            select: {
+                id: true,
+                username: true,
+                role: true,
+                created_at: true
+            }
+        });
+        res.status(201).json(staffUser);
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to create staff user' });
+    }
+});
+// PUT Aggiorna staff user
+app.put('/api/admin/staff/:id', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const staffId = parseInt(req.params.id);
+    const { username, password, role } = req.body;
+    try {
+        // Verifica che lo staff user appartenga al tenant
+        const existing = await prisma.staffUser.findFirst({
+            where: { id: staffId, tenantId: req.tenantId }
+        });
+        if (!existing) {
+            return res.status(404).json({ error: 'Staff user not found' });
+        }
+        // Prepara dati da aggiornare
+        const updateData = {};
+        if (username)
+            updateData.username = username;
+        if (role)
+            updateData.role = role;
+        if (password)
+            updateData.password_hash = await bcrypt_1.default.hash(password, 10);
+        const staffUser = await prisma.staffUser.update({
+            where: { id: staffId },
+            data: updateData,
+            select: {
+                id: true,
+                username: true,
+                role: true,
+                created_at: true
+            }
+        });
+        res.json(staffUser);
+    }
+    catch (err) {
+        if (err.code === 'P2002') {
+            return res.status(400).json({ error: 'Username already exists' });
+        }
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update staff user' });
+    }
+});
+// DELETE Elimina staff user
+app.delete('/api/admin/staff/:id', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.validateLicenseWithWarning, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    const staffId = parseInt(req.params.id);
+    try {
+        // Verifica che lo staff user appartenga al tenant
+        const existing = await prisma.staffUser.findFirst({
+            where: { id: staffId, tenantId: req.tenantId }
+        });
+        if (!existing) {
+            return res.status(404).json({ error: 'Staff user not found' });
+        }
+        // Non permettere di eliminare se stesso
+        if (existing.id === req.user?.id) {
+            return res.status(400).json({ error: 'Cannot delete your own account' });
+        }
+        await prisma.staffUser.delete({ where: { id: staffId } });
+        res.json({ success: true });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to delete staff user' });
+    }
+});
+// GET Tenant limits info (per mostrare quanti staff rimangono)
+app.get('/api/admin/tenant-limits', tenantMiddleware_1.resolveTenant, licenseMiddleware_1.allowExpiredLicense, authMiddleware_1.authenticateToken, (0, authMiddleware_1.authorizeRole)('admin'), async (req, res) => {
+    try {
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: req.tenantId },
+            include: {
+                _count: {
+                    select: {
+                        staffUsers: true,
+                        promotions: true
+                    }
+                }
+            }
+        });
+        if (!tenant) {
+            return res.status(404).json({ error: 'Tenant not found' });
+        }
+        res.json({
+            plan: tenant.plan,
+            staffUsers: {
+                used: tenant._count.staffUsers,
+                max: tenant.maxStaffUsers
+            },
+            promotions: {
+                used: tenant._count.promotions,
+                max: tenant.maxPromotions
+            },
+            tokensPerPromo: tenant.maxTokensPerPromo,
+            licenseStatus: tenant.licenseStatus,
+            licenseEnd: tenant.licenseEnd
+        });
+    }
+    catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch tenant limits' });
     }
 });
 app.listen(PORT, () => {

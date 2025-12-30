@@ -4,6 +4,7 @@ import "./globals.css";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { GoogleTagManagerHead, GoogleTagManagerBody } from "./components/GoogleTagManager";
 import { MetaPixelHead, MetaPixelBody, MetaPixelScript } from "./components/MetaPixel";
+import { TenantProvider } from "./providers/TenantProvider";
 
 const josefin = Josefin_Sans({
   subsets: ["latin"],
@@ -53,9 +54,11 @@ export default function RootLayout({
         <GoogleTagManagerBody />
         <MetaPixelScript />
         <MetaPixelBody />
-        <ErrorBoundary>
-          {children}
-        </ErrorBoundary>
+        <TenantProvider>
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
+        </TenantProvider>
       </body>
     </html>
   );

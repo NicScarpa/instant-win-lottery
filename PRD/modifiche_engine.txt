@@ -1,0 +1,560 @@
+# PROMPT: Implementazione ProbabilityEngine v2.0 - Campari Lottery
+# Data analisi: 20 Dicembre 2024
+# Progetto: /Users/nicolascarpa/Desktop/campari-lottery
+
+================================================================================
+CONTESTO DEL PROGETTO
+================================================================================
+
+Questo progetto è un sistema di lottery/instant-win per promozioni Campari.
+- Frontend: Next.js (frontend/)
+- Backend: Express + Prisma + SQLite (backend/)
+- Dominio produzione: www.camparinoweek.com
+
+File chiave del sistema di estrazione:
+- backend/src/services/ProbabilityEngine.ts (motore estrazione attuale)
+- backend/src/server.ts (endpoint /api/customer/play, righe ~1562-1692)
+- backend/prisma/schema.prisma (struttura database)
+
+================================================================================
+OBIETTIVI DELLE MODIFICHE
+================================================================================
+
+1. POCKET MIRROR ESCLUSIVO PER DONNE
+   - Il premio "Pocket Mirror" deve essere assegnato SOLO a giocatrici donne
+   - Riconoscere il genere dal nome inserito in fase di registrazione
+   - Se il giocatore è uomo o genere sconosciuto: Pocket Mirror escluso dall'estrazione
+
+2. PENALIZZAZIONE GIOCATORI FREQUENTI (progressiva)
+   - Sotto 5 giocate: nessuna penalità
+   - Dalla 6a giocata: -10% probabilità di vincita
+   - Ogni giocata successiva: ulteriore -2%
+   - Cap massimo penalità giocate: -50%
+
+   - Dopo 1 vittoria: -20% probabilità
+   - Dopo 2 vittorie: -40% probabilità
+   - Dopo 3+ vittorie: -60% probabilità (cap)
+
+   - Le penalità si combinano moltiplicativamente
+
+3. PACING (distribuzione uniforme nel tempo)
+   - Evitare che i premi finiscano prematuramente
+   - Se stiamo distribuendo troppo velocemente: rallentare
+   - Se stiamo distribuendo troppo lentamente: accelerare
+   - Obiettivo: distribuzione uniforme dei premi nel corso della promozione
+
+4. TRACCIAMENTO GENERE
+   - Salvare il genere rilevato nel database (campo detected_gender su Customer)
+   - Valori: 'F' (femmina), 'M' (maschio), 'U' (unknown)
+
+================================================================================
+FASE 1: MODIFICHE DATABASE (Prisma Schema)
+================================================================================
+
+File: backend/prisma/schema.prisma
+
+AGGIUNGERE al model Customer:
+```prisma
+  total_wins       Int       @default(0)    // Contatore vittorie totali
+  last_win_at      DateTime?                // Timestamp ultima vittoria
+  detected_gender  String?                  // 'F', 'M', 'U'
+```
+
+AGGIUNGERE al model PrizeType:
+```prisma
+  gender_restriction  String?   // 'F' = solo donne, 'M' = solo uomini, null = tutti
+```
+
+DOPO LE MODIFICHE:
+- Eseguire: cd backend && npx prisma db push
+- Oppure creare migrazione: npx prisma migrate dev --name add_gender_fields
+
+================================================================================
+FASE 2: LISTA NOMI PER RICONOSCIMENTO GENERE
+================================================================================
+
+CREARE FILE: backend/src/data/femaleNames.ts
+
+Contenuto: Set di nomi femminili italiani comuni (almeno 300-500 nomi)
+Includere varianti con/senza accenti.
+
+Struttura:
+```typescript
+export const FEMALE_NAMES = new Set([
+  'maria', 'anna', 'giulia', 'francesca', 'sara', 'laura', 'valentina',
+  'chiara', 'alessia', 'federica', 'elena', 'silvia', 'martina', 'elisa',
+  'paola', 'giorgia', 'monica', 'simona', 'daniela', 'cristina', 'roberta',
+  'barbara', 'alessandra', 'ilaria', 'serena', 'michela', 'veronica',
+  'beatrice', 'alice', 'aurora', 'sofia', 'emma', 'gaia', 'giada', 'noemi',
+  'rebecca', 'camilla', 'arianna', 'eleonora', 'irene', 'ludovica', 'bianca',
+  // ... continuare con almeno 300 nomi
+]);
+```
+
+CREARE FILE: backend/src/data/maleNames.ts
+
+Contenuto: Set di nomi maschili italiani comuni
+```typescript
+export const MALE_NAMES = new Set([
+  'marco', 'luca', 'andrea', 'matteo', 'alessandro', 'francesco', 'lorenzo',
+  'davide', 'simone', 'federico', 'giuseppe', 'antonio', 'giovanni', 'stefano',
+  'roberto', 'michele', 'daniele', 'paolo', 'riccardo', 'gabriele', 'filippo',
+  'nicola', 'fabio', 'emanuele', 'alberto', 'tommaso', 'leonardo', 'edoardo',
+  // ... continuare con almeno 300 nomi
+]);
+```
+
+NOTA: "Andrea" in Italia è prevalentemente maschile, inserirlo in MALE_NAMES.
+
+================================================================================
+FASE 3: UTILITY RICONOSCIMENTO GENERE
+================================================================================
+
+CREARE FILE: backend/src/utils/genderDetection.ts
+
+```typescript
+import { FEMALE_NAMES } from '../data/femaleNames';
+import { MALE_NAMES } from '../data/maleNames';
+
+export interface GenderResult {
+  gender: 'F' | 'M' | 'U';
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export function detectGender(firstName: string): GenderResult {
+  if (!firstName || typeof firstName !== 'string') {
+    return { gender: 'U', confidence: 'low' };
+  }
+
+  const normalized = firstName.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // Rimuove accenti
+
+  // Check liste esplicite
+  if (FEMALE_NAMES.has(normalized)) {
+    return { gender: 'F', confidence: 'high' };
+  }
+
+  if (MALE_NAMES.has(normalized)) {
+    return { gender: 'M', confidence: 'high' };
+  }
+
+  // Euristiche per nomi non in lista (italiano)
+  // Nomi che finiscono in -a sono tipicamente femminili
+  if (normalized.endsWith('a') && !normalized.endsWith('ia')) {
+    return { gender: 'F', confidence: 'medium' };
+  }
+
+  // Nomi che finiscono in -o sono tipicamente maschili
+  if (normalized.endsWith('o')) {
+    return { gender: 'M', confidence: 'medium' };
+  }
+
+  // Suffissi femminili comuni
+  if (normalized.endsWith('ella') || normalized.endsWith('etta') ||
+      normalized.endsWith('ina') || normalized.endsWith('essa')) {
+    return { gender: 'F', confidence: 'medium' };
+  }
+
+  return { gender: 'U', confidence: 'low' };
+}
+```
+
+================================================================================
+FASE 4: RISCRITTURA PROBABILITY ENGINE
+================================================================================
+
+File: backend/src/services/ProbabilityEngine.ts
+
+SOSTITUIRE COMPLETAMENTE con la nuova implementazione:
+
+```typescript
+import { detectGender } from '../utils/genderDetection';
+
+export interface PrizeConfig {
+  id: number;
+  name: string;
+  initialStock: number;
+  remainingStock: number;
+  genderRestriction?: string | null;  // 'F', 'M', o null
+}
+
+export interface CustomerStats {
+  firstName: string;
+  totalPlays: number;
+  totalWins: number;
+  detectedGender?: string | null;
+}
+
+export interface EngineInput {
+  totalTokens: number;
+  usedTokens: number;
+  prizeTypes: PrizeConfig[];
+  customer: CustomerStats;
+  prizesAssignedTotal: number;
+}
+
+export interface EngineOutput {
+  winner: boolean;
+  prize: PrizeConfig | null;
+  factors: {
+    fatigue: number;
+    pacing: number;
+    finalModifier: number;
+  };
+}
+
+/**
+ * Calcola il fattore di penalizzazione per giocatori frequenti
+ */
+function calculateFatigueFactor(totalPlays: number, totalWins: number): number {
+  let factor = 1.0;
+
+  // === PENALITÀ PER GIOCATE FREQUENTI ===
+  // Sotto 5 giocate: nessuna penalità
+  // Dalla 6a giocata: -10%
+  // Ogni giocata successiva: ulteriore -2%
+  if (totalPlays >= 6) {
+    const extraPlays = totalPlays - 5;
+    const playPenalty = 0.10 + (extraPlays - 1) * 0.02;
+    factor *= (1 - Math.min(playPenalty, 0.50)); // Cap -50%
+  }
+
+  // === PENALITÀ PER VITTORIE PRECEDENTI ===
+  // 1 vittoria: -20%
+  // 2 vittorie: -40%
+  // 3+ vittorie: -60% (cap)
+  if (totalWins >= 1) {
+    const winPenalty = Math.min(totalWins * 0.20, 0.60);
+    factor *= (1 - winPenalty);
+  }
+
+  return Math.max(factor, 0.1); // Minimo 10% di probabilità residua
+}
+
+/**
+ * Calcola il fattore di pacing per distribuzione uniforme
+ */
+function calculatePacingFactor(
+  usedTokens: number,
+  totalTokens: number,
+  prizesAssigned: number,
+  totalInitialPrizes: number
+): number {
+  if (usedTokens === 0 || totalTokens === 0 || totalInitialPrizes === 0) {
+    return 1.0;
+  }
+
+  // Percentuale di avanzamento
+  const tokenProgress = usedTokens / totalTokens;
+  const prizeProgress = prizesAssigned / totalInitialPrizes;
+
+  // Evita divisione per zero
+  if (tokenProgress === 0) return 1.0;
+
+  // Rapporto: quanto velocemente stiamo distribuendo vs ideale
+  const ratio = prizeProgress / tokenProgress;
+
+  if (ratio > 1.3) {
+    // Troppo veloce: rallenta molto (-40%)
+    return 0.6;
+  } else if (ratio > 1.15) {
+    // Un po' troppo veloce: rallenta (-20%)
+    return 0.8;
+  } else if (ratio < 0.7) {
+    // Troppo lento: accelera molto (+40%)
+    return 1.4;
+  } else if (ratio < 0.85) {
+    // Un po' troppo lento: accelera (+20%)
+    return 1.2;
+  }
+
+  return 1.0; // Ritmo ideale
+}
+
+export class ProbabilityEngine {
+
+  determineOutcome(input: EngineInput): EngineOutput {
+    const { customer, prizeTypes, totalTokens, usedTokens, prizesAssignedTotal } = input;
+
+    // Risultato default (perdita)
+    const lossResult: EngineOutput = {
+      winner: false,
+      prize: null,
+      factors: { fatigue: 1, pacing: 1, finalModifier: 1 }
+    };
+
+    // Verifica token rimasti
+    const tokensRemaining = totalTokens - usedTokens;
+    if (tokensRemaining <= 0) {
+      return lossResult;
+    }
+
+    // 1. RILEVAMENTO GENERE
+    const gender = customer.detectedGender || detectGender(customer.firstName).gender;
+
+    // 2. FILTRA PREMI DISPONIBILI E COMPATIBILI CON GENERE
+    const eligiblePrizes = prizeTypes.filter(prize => {
+      // Escludi se stock esaurito
+      if (prize.remainingStock <= 0) return false;
+
+      // Escludi se restrizione genere non soddisfatta
+      if (prize.genderRestriction === 'F' && gender !== 'F') return false;
+      if (prize.genderRestriction === 'M' && gender !== 'M') return false;
+
+      return true;
+    });
+
+    // Se nessun premio disponibile, perdita certa
+    if (eligiblePrizes.length === 0) {
+      return lossResult;
+    }
+
+    // 3. CALCOLO FATIGUE FACTOR
+    const fatigue = calculateFatigueFactor(customer.totalPlays, customer.totalWins);
+
+    // 4. CALCOLO PACING FACTOR
+    const totalInitialPrizes = prizeTypes.reduce((sum, p) => sum + p.initialStock, 0);
+    const pacing = calculatePacingFactor(
+      usedTokens,
+      totalTokens,
+      prizesAssignedTotal,
+      totalInitialPrizes
+    );
+
+    // 5. MODIFICATORE GLOBALE
+    const globalModifier = fatigue * pacing;
+
+    // 6. CALCOLO PROBABILITÀ CUMULATIVE
+    let cumulative = 0;
+    const probabilities: Array<{ prize: PrizeConfig; threshold: number }> = [];
+
+    for (const prize of eligiblePrizes) {
+      const baseProbability = prize.remainingStock / tokensRemaining;
+      const adjustedProbability = baseProbability * globalModifier;
+      cumulative += adjustedProbability;
+      probabilities.push({ prize, threshold: cumulative });
+    }
+
+    // 7. ESTRAZIONE CASUALE
+    const random = Math.random();
+
+    for (const { prize, threshold } of probabilities) {
+      if (random < threshold) {
+        return {
+          winner: true,
+          prize,
+          factors: { fatigue, pacing, finalModifier: globalModifier }
+        };
+      }
+    }
+
+    // Nessuna vincita
+    return {
+      winner: false,
+      prize: null,
+      factors: { fatigue, pacing, finalModifier: globalModifier }
+    };
+  }
+}
+
+// Singleton export
+export const probabilityEngine = new ProbabilityEngine();
+```
+
+================================================================================
+FASE 5: MODIFICHE A SERVER.TS
+================================================================================
+
+File: backend/src/server.ts
+
+MODIFICARE l'endpoint POST /api/customer/play (circa riga 1562):
+
+1. Importare il nuovo engine all'inizio del file:
+```typescript
+import { probabilityEngine, PrizeConfig } from './services/ProbabilityEngine';
+import { detectGender } from './utils/genderDetection';
+```
+
+2. All'interno della transazione, PRIMA dell'estrazione:
+
+```typescript
+// Recupera statistiche customer
+const customerStats = await tx.customer.findUnique({
+  where: { id: customerId },
+  select: {
+    first_name: true,
+    total_plays: true,
+    total_wins: true,
+    detected_gender: true
+  }
+});
+
+// Conta premi già assegnati in questa promozione
+const prizesAssignedTotal = await tx.prizeAssignment.count({
+  where: {
+    customer: {
+      promotion_id: promotionId
+    }
+  }
+});
+
+// Prepara input per il motore
+const engineInput = {
+  totalTokens,
+  usedTokens,
+  prizeTypes: prizeTypesFromDb.map(p => ({
+    id: p.id,
+    name: p.name,
+    initialStock: p.initial_stock,
+    remainingStock: p.remaining_stock,
+    genderRestriction: p.gender_restriction
+  })),
+  customer: {
+    firstName: customerStats.first_name,
+    totalPlays: customerStats.total_plays,
+    totalWins: customerStats.total_wins,
+    detectedGender: customerStats.detected_gender
+  },
+  prizesAssignedTotal
+};
+
+// Esegui estrazione
+const outcome = probabilityEngine.determineOutcome(engineInput);
+```
+
+3. Se vincita, aggiornare anche total_wins del customer:
+
+```typescript
+if (outcome.winner && outcome.prize) {
+  // ... logica esistente per decrementare stock e creare PrizeAssignment ...
+
+  // AGGIUNGERE: Incrementa contatore vittorie
+  await tx.customer.update({
+    where: { id: customerId },
+    data: {
+      total_wins: { increment: 1 },
+      last_win_at: new Date()
+    }
+  });
+}
+```
+
+================================================================================
+FASE 6: MODIFICHE REGISTRAZIONE CUSTOMER
+================================================================================
+
+File: backend/src/server.ts
+
+MODIFICARE l'endpoint POST /api/customer/register:
+
+Al momento della creazione/aggiornamento del customer, rilevare e salvare il genere:
+
+```typescript
+import { detectGender } from './utils/genderDetection';
+
+// ... dentro l'endpoint register ...
+
+const genderResult = detectGender(firstName);
+
+// Nel create o upsert:
+await prisma.customer.upsert({
+  where: {
+    promotion_phone: { promotion_id: promotionId, phone_number: phoneNumber }
+  },
+  create: {
+    promotion_id: promotionId,
+    phone_number: phoneNumber,
+    first_name: firstName,
+    last_name: lastName,
+    detected_gender: genderResult.gender,  // NUOVO
+    // ... altri campi
+  },
+  update: {
+    first_name: firstName,
+    last_name: lastName,
+    detected_gender: genderResult.gender,  // NUOVO
+    // ... altri campi
+  }
+});
+```
+
+================================================================================
+FASE 7: ADMIN - CONFIGURAZIONE GENDER RESTRICTION
+================================================================================
+
+1. BACKEND: Modificare endpoint PUT /api/admin/prizes/:prizeId per accettare gender_restriction
+
+2. FRONTEND: In frontend/app/admin/dashboard/components/PrizeManager.tsx
+   - Aggiungere dropdown per selezionare restrizione genere:
+     - "Tutti" (null)
+     - "Solo Donne" ('F')
+     - "Solo Uomini" ('M')
+
+3. Dopo il deploy, andare nella dashboard admin e impostare:
+   - Premio "Pocket Mirror" → gender_restriction = 'F'
+
+================================================================================
+COMANDI POST-IMPLEMENTAZIONE
+================================================================================
+
+1. Applicare modifiche database:
+   cd backend && npx prisma db push
+
+2. Ricompilare TypeScript:
+   cd backend && npm run build
+
+3. Testare in locale:
+   cd backend && npm run dev
+
+4. Commit e push:
+   git add . && git commit -m "feat: implement ProbabilityEngine v2.0 with gender detection, fatigue and pacing"
+
+================================================================================
+TABELLA RIEPILOGATIVA PENALITÀ
+================================================================================
+
+GIOCATE (total_plays):
+| Giocate | Penalità |
+|---------|----------|
+| 1-5     | 0%       |
+| 6       | -10%     |
+| 7       | -12%     |
+| 8       | -14%     |
+| 10      | -18%     |
+| 15      | -28%     |
+| 20      | -38%     |
+| 25+     | -50% max |
+
+VITTORIE (total_wins):
+| Vittorie | Penalità |
+|----------|----------|
+| 0        | 0%       |
+| 1        | -20%     |
+| 2        | -40%     |
+| 3+       | -60% max |
+
+COMBINAZIONE ESEMPIO:
+- 10 giocate + 2 vittorie
+- Fatigue = (1 - 0.18) × (1 - 0.40) = 0.82 × 0.60 = 0.492
+- Probabilità ridotta del ~51%
+
+================================================================================
+NOTE IMPORTANTI
+================================================================================
+
+1. Il campo gender_restriction sul premio "Pocket Mirror" deve essere impostato
+   MANUALMENTE dall'admin dopo il deploy (valore: 'F')
+
+2. I nomi androgini o stranieri avranno genere 'U' (unknown) e NON riceveranno
+   il Pocket Mirror (trattati come non-donne per sicurezza)
+
+3. Il pacing si auto-regola: se i premi stanno finendo troppo in fretta,
+   la probabilità di vincita diminuisce automaticamente
+
+4. Le penalità hanno un floor del 10% - nessun giocatore avrà mai 0% di probabilità
+
+5. Tutti i fattori vengono loggati nell'output per debugging
+
+================================================================================
+FINE DOCUMENTO
+================================================================================

@@ -1,0 +1,431 @@
+================================================================================
+SPECIFICA PANNELLO ADMIN - CONFIGURAZIONE PROBABILITY ENGINE
+================================================================================
+Data: 21 Dicembre 2024
+Versione Engine: 2.1
+
+================================================================================
+STRUTTURA GENERALE
+================================================================================
+
+Il pannello di configurazione sarebbe accessibile da:
+Dashboard Admin > Impostazioni Promozione > Configurazione Estrazione
+
+Struttura a tab/sezioni:
+1. Penalita Giocatori Frequenti (Fatigue)
+2. Distribuzione Premi (Pacing)
+3. Pressione Temporale (Time Pressure)
+4. Impostazioni Globali
+
+Ogni promozione puo' avere configurazioni PERSONALIZZATE o usare i VALORI DEFAULT.
+
+================================================================================
+SEZIONE 1: PENALITA GIOCATORI FREQUENTI (FATIGUE)
+================================================================================
+
+TITOLO SEZIONE: "Penalizzazione Giocatori Frequenti"
+DESCRIZIONE: "Riduci la probabilita di vincita per chi gioca o vince troppo spesso"
+
+TOGGLE PRINCIPALE:
+[ ] Abilita penalizzazione giocatori frequenti
+    (Se disabilitato, tutti hanno la stessa probabilita base)
+
+--- Sottosezione: Penalita per Numero di Giocate ---
+
+Campo: "Soglia giocate per attivazione penalita"
+  Tipo: Numero intero
+  Default: 6
+  Range: 1-50
+  Tooltip: "La penalita si attiva dalla N-esima giocata"
+
+Campo: "Penalita iniziale"
+  Tipo: Percentuale (slider o input)
+  Default: 10%
+  Range: 0-50%
+  Tooltip: "Riduzione probabilita alla prima giocata oltre la soglia"
+
+Campo: "Incremento per giocata successiva"
+  Tipo: Percentuale
+  Default: 2%
+  Range: 0-10%
+  Tooltip: "Ogni giocata oltre la soglia aggiunge questa penalita"
+
+Campo: "Penalita massima giocate"
+  Tipo: Percentuale
+  Default: 50%
+  Range: 10-90%
+  Tooltip: "Cap massimo della penalita per numero di giocate"
+
+--- Sottosezione: Penalita per Vittorie Precedenti ---
+
+Campo: "Penalita per vittoria"
+  Tipo: Percentuale
+  Default: 20%
+  Range: 0-50%
+  Tooltip: "Riduzione per ogni vittoria precedente (cumulativo)"
+
+Campo: "Penalita massima vittorie"
+  Tipo: Percentuale
+  Default: 60%
+  Range: 20-90%
+  Tooltip: "Cap massimo della penalita per vittorie"
+
+--- Sottosezione: Limiti ---
+
+Campo: "Probabilita minima garantita"
+  Tipo: Percentuale
+  Default: 10%
+  Range: 1-50%
+  Tooltip: "Nessun giocatore scendera' mai sotto questa probabilita"
+
+--- Anteprima Interattiva ---
+
+Tabella dinamica che mostra esempi:
+| Giocate | Vittorie | Fattore Fatigue | Probabilita Effettiva* |
+|---------|----------|-----------------|------------------------|
+| 1       | 0        | 100%            | 5.0%                   |
+| 5       | 0        | 100%            | 5.0%                   |
+| 6       | 0        | 90%             | 4.5%                   |
+| 10      | 0        | 82%             | 4.1%                   |
+| 10      | 2        | 49%             | 2.5%                   |
+| 20      | 3        | 25%             | 1.3%                   |
+
+*Basato su probabilita base del 5%
+
+================================================================================
+SEZIONE 2: DISTRIBUZIONE PREMI (PACING)
+================================================================================
+
+TITOLO SEZIONE: "Controllo Ritmo Distribuzione"
+DESCRIZIONE: "Regola automaticamente la probabilita per distribuire i premi uniformemente"
+
+TOGGLE PRINCIPALE:
+[ ] Abilita pacing automatico
+    (Se disabilitato, usa solo la probabilita base)
+
+--- Sottosezione: Soglie di Intervento ---
+
+GRAFICO VISUALE: Slider doppio che mostra le zone
+
+         RALLENTA          NEUTRO           ACCELERA
+    |---------|---------|---------|---------|---------|
+   0.6       0.85      1.0       1.15      1.3+
+
+   "Troppo    "Un po'            "Un po'    "Troppo
+    veloce"   veloce"            lento"     lento"
+
+Campo: "Soglia 'troppo veloce'"
+  Tipo: Decimale
+  Default: 1.30
+  Range: 1.1-2.0
+  Tooltip: "Se ratio > questo valore, applica rallentamento massimo"
+
+Campo: "Rallentamento massimo"
+  Tipo: Percentuale (come moltiplicatore)
+  Default: 0.60 (= -40%)
+  Range: 0.3-0.9
+
+Campo: "Soglia 'leggermente veloce'"
+  Tipo: Decimale
+  Default: 1.15
+  Range: 1.05-1.5
+
+Campo: "Rallentamento leggero"
+  Tipo: Percentuale
+  Default: 0.80 (= -20%)
+  Range: 0.5-0.95
+
+Campo: "Soglia 'leggermente lento'"
+  Tipo: Decimale
+  Default: 0.85
+  Range: 0.5-0.95
+
+Campo: "Accelerazione leggera"
+  Tipo: Percentuale
+  Default: 1.20 (= +20%)
+  Range: 1.05-1.5
+
+Campo: "Soglia 'troppo lento'"
+  Tipo: Decimale
+  Default: 0.70
+  Range: 0.3-0.9
+
+Campo: "Accelerazione massima"
+  Tipo: Percentuale
+  Default: 1.40 (= +40%)
+  Range: 1.1-2.0
+
+--- Anteprima ---
+
+Mostra stato attuale della promozione:
+"Token usati: 45% | Premi assegnati: 52% | Ratio: 1.16 | Pacing attuale: 0.80"
+
+================================================================================
+SEZIONE 3: PRESSIONE TEMPORALE (TIME PRESSURE)
+================================================================================
+
+TITOLO SEZIONE: "Boost Fine Promozione"
+DESCRIZIONE: "Aumenta la probabilita di vincita man mano che la promozione si avvicina alla fine"
+
+TOGGLE PRINCIPALE:
+[ ] Abilita time pressure
+    (Se disabilitato, nessun boost temporale)
+
+--- Sottosezione: Fasi Temporali ---
+
+TIMELINE VISUALE:
+|-------- Normale --------|-- Conservazione --|-- Distribuzione --|--Finale--|
+                          ^                    ^                    ^          ^
+                       -1 ora              -5 min               -1 min      Fine
+
+Campo: "Inizio fase conservazione"
+  Tipo: Durata (minuti)
+  Default: 60 minuti
+  Range: 15-180 minuti
+  Tooltip: "Quanto tempo prima della fine inizia il controllo time pressure"
+
+Campo: "Inizio fase distribuzione"
+  Tipo: Durata (minuti)
+  Default: 5 minuti
+  Range: 1-30 minuti
+  Tooltip: "Quando inizia il boost aggressivo"
+
+Campo: "Inizio fase finale"
+  Tipo: Durata (minuti)
+  Default: 1 minuto
+  Range: 0.5-5 minuti
+  Tooltip: "Quando applicare il boost massimo"
+
+--- Sottosezione: Fase Conservazione ---
+
+DESCRIZIONE: "Se i premi stanno finendo troppo in fretta, rallenta per preservarli"
+
+Campo: "Rallentamento minimo conservazione"
+  Tipo: Percentuale
+  Default: 0.30 (= -70%)
+  Range: 0.1-0.8
+  Tooltip: "Massimo rallentamento se i premi finirebbero troppo presto"
+
+Campo: "Rallentamento massimo conservazione"
+  Tipo: Percentuale
+  Default: 0.80 (= -20%)
+  Range: 0.5-1.0
+
+Campo: "Boost se margine ampio"
+  Tipo: Percentuale
+  Default: 1.30 (= +30%)
+  Range: 1.0-1.5
+  Tooltip: "Se c'e' molto margine, leggero boost per non accumulare premi"
+
+--- Sottosezione: Fase Distribuzione ---
+
+DESCRIZIONE: "Boost aggressivo per distribuire i premi rimanenti"
+
+Campo: "Boost minimo distribuzione"
+  Tipo: Moltiplicatore
+  Default: 1.5x
+  Range: 1.0-3.0
+
+Campo: "Boost massimo distribuzione"
+  Tipo: Moltiplicatore
+  Default: 5.0x
+  Range: 2.0-10.0
+
+[ ] Calcolo automatico boost basato su premi rimanenti
+    (Se attivo, il boost e' proporzionale ai premi da distribuire)
+
+--- Sottosezione: Fase Finale ---
+
+DESCRIZIONE: "Massima urgenza per svuotare i premi"
+
+Campo: "Boost fase finale"
+  Tipo: Moltiplicatore
+  Default: 10.0x
+  Range: 5.0-20.0
+  Tooltip: "Moltiplicatore applicato nell'ultimo minuto"
+
+[ ] Forza vittoria se premi rimanenti
+    (Se attivo e ci sono premi, probabilita = 100% nell'ultimo minuto)
+    ATTENZIONE: Ignora il fatigue se attivo
+
+--- Anteprima ---
+
+Mostra stato attuale:
+"Tempo rimanente: 45 minuti | Fase: Conservazione | Time Pressure: 1.15x"
+"Premi rimanenti: 8 | Stima esaurimento: 2 ore | Margine: OK"
+
+================================================================================
+SEZIONE 4: IMPOSTAZIONI GLOBALI
+================================================================================
+
+TITOLO SEZIONE: "Impostazioni Generali"
+
+--- Valori Default ---
+
+[ ] Usa questi valori come default per nuove promozioni
+
+PULSANTE: "Ripristina valori di fabbrica"
+PULSANTE: "Copia configurazione da altra promozione" -> Dropdown promozioni
+
+--- Logging e Debug ---
+
+[ ] Abilita logging dettagliato estrazioni
+    (Salva tutti i fattori per ogni estrazione nel database)
+
+[ ] Mostra fattori nel risultato API
+    (Utile per debug, espone fatigue/pacing/timePressure nella response)
+
+--- Limiti di Sicurezza ---
+
+Campo: "Probabilita massima assoluta"
+  Tipo: Percentuale
+  Default: 100%
+  Range: 50-100%
+  Tooltip: "Cap massimo dopo tutti i modificatori"
+
+Campo: "Probabilita minima assoluta"
+  Tipo: Percentuale
+  Default: 0.1%
+  Range: 0-10%
+  Tooltip: "Nessuno scendera' mai sotto questo valore"
+
+================================================================================
+SCHEMA DATABASE - NUOVA TABELLA
+================================================================================
+
+Tabella: PromotionEngineConfig
+
+CREATE TABLE PromotionEngineConfig (
+  id                          INT PRIMARY KEY,
+  promotion_id                INT UNIQUE REFERENCES Promotion(id),
+
+  -- Fatigue
+  fatigue_enabled             BOOLEAN DEFAULT true,
+  fatigue_play_threshold      INT DEFAULT 6,
+  fatigue_play_base_penalty   FLOAT DEFAULT 0.10,
+  fatigue_play_increment      FLOAT DEFAULT 0.02,
+  fatigue_play_max            FLOAT DEFAULT 0.50,
+  fatigue_win_penalty         FLOAT DEFAULT 0.20,
+  fatigue_win_max             FLOAT DEFAULT 0.60,
+  fatigue_min_probability     FLOAT DEFAULT 0.10,
+
+  -- Pacing
+  pacing_enabled              BOOLEAN DEFAULT true,
+  pacing_too_fast_threshold   FLOAT DEFAULT 1.30,
+  pacing_too_fast_multiplier  FLOAT DEFAULT 0.60,
+  pacing_fast_threshold       FLOAT DEFAULT 1.15,
+  pacing_fast_multiplier      FLOAT DEFAULT 0.80,
+  pacing_slow_threshold       FLOAT DEFAULT 0.85,
+  pacing_slow_multiplier      FLOAT DEFAULT 1.20,
+  pacing_too_slow_threshold   FLOAT DEFAULT 0.70,
+  pacing_too_slow_multiplier  FLOAT DEFAULT 1.40,
+
+  -- Time Pressure
+  time_pressure_enabled       BOOLEAN DEFAULT true,
+  time_conservation_start_min INT DEFAULT 60,
+  time_distribution_start_min INT DEFAULT 5,
+  time_final_start_min        INT DEFAULT 1,
+  time_conservation_min       FLOAT DEFAULT 0.30,
+  time_conservation_max       FLOAT DEFAULT 0.80,
+  time_conservation_boost     FLOAT DEFAULT 1.30,
+  time_distribution_min       FLOAT DEFAULT 1.50,
+  time_distribution_max       FLOAT DEFAULT 5.00,
+  time_final_boost            FLOAT DEFAULT 10.00,
+  time_force_win_final        BOOLEAN DEFAULT false,
+
+  -- Global
+  max_probability             FLOAT DEFAULT 1.00,
+  min_probability             FLOAT DEFAULT 0.001,
+  logging_enabled             BOOLEAN DEFAULT false,
+
+  created_at                  TIMESTAMP DEFAULT NOW(),
+  updated_at                  TIMESTAMP DEFAULT NOW()
+);
+
+================================================================================
+INTERFACCIA UTENTE - MOCKUP TESTUALE
+================================================================================
+
++------------------------------------------------------------------+
+| CONFIGURAZIONE ESTRAZIONE - Promozione: Camparino Week 2024       |
++------------------------------------------------------------------+
+|                                                                   |
+| [Tab: Fatigue] [Tab: Pacing] [Tab: Time Pressure] [Tab: Globali]  |
+|                                                                   |
+| ================================================================= |
+|                                                                   |
+| PENALIZZAZIONE GIOCATORI FREQUENTI                                |
+|                                                                   |
+| [X] Abilita penalizzazione                                        |
+|                                                                   |
+| Soglia attivazione: [____6____] giocate                           |
+|                                                                   |
+| Penalita iniziale:  [===|=====] 10%                               |
+| Incremento:         [=|=======] 2%                                |
+| Max penalita:       [=====|===] 50%                               |
+|                                                                   |
+| Penalita per vittoria: [====|====] 20%                            |
+| Max penalita vittorie: [======|==] 60%                            |
+|                                                                   |
+| Probabilita minima garantita: [==|======] 10%                     |
+|                                                                   |
+| ----- Anteprima -----                                             |
+| | Giocate | Vittorie | Fatigue |                                  |
+| |---------|----------|---------|                                  |
+| |    1    |    0     |  100%   |                                  |
+| |   10    |    2     |   49%   |                                  |
+| |   20    |    3     |   25%   |                                  |
+|                                                                   |
+| [Ripristina Default]                    [Salva Configurazione]    |
+|                                                                   |
++------------------------------------------------------------------+
+
+================================================================================
+NOTE IMPLEMENTATIVE
+================================================================================
+
+1. RETROCOMPATIBILITA
+   - Se non esiste configurazione per una promozione, usare valori default
+   - I valori attuali hardcoded diventano i default
+
+2. VALIDAZIONE
+   - Impedire combinazioni assurde (es. min > max)
+   - Warning se configurazione potrebbe causare problemi
+     (es. "Attenzione: con questi valori, un giocatore con 5 vittorie
+      avrebbe 0% di probabilita")
+
+3. PERFORMANCE
+   - Cache della configurazione in memoria
+   - Reload solo quando modificata
+
+4. AUDIT LOG
+   - Registrare chi modifica la configurazione e quando
+   - Permettere rollback a configurazione precedente
+
+5. PRESET
+   - "Conservativo": penalita alte, pacing stretto
+   - "Generoso": penalita basse, boost alti
+   - "Bilanciato": valori default
+
+================================================================================
+PRIORITA IMPLEMENTAZIONE
+================================================================================
+
+FASE 1 (MVP):
+- Toggle abilita/disabilita per ogni sezione
+- Parametri principali fatigue (soglie e penalita)
+- Parametri principali time pressure (tempi e boost)
+
+FASE 2:
+- Tutti i parametri pacing
+- Anteprima interattiva
+- Logging opzionale
+
+FASE 3:
+- Preset configurazioni
+- Import/export configurazioni
+- Audit log modifiche
+
+================================================================================
+FINE DOCUMENTO
+================================================================================

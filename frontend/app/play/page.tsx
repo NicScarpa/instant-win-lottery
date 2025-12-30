@@ -6,8 +6,10 @@ import QRCode from 'react-qr-code';
 import confetti from 'canvas-confetti';
 import LegalModal from '../components/LegalModal';
 import LiveLeaderboard from './components/LiveLeaderboard';
+import LanguageSelector from './components/LanguageSelector';
 import { LEGAL_TEXTS } from '../lib/legalData';
 import { getApiUrl } from '../lib/api';
+import { useBranding, useContent } from '../providers/TenantProvider';
 import {
     trackViewContent,
     trackRegistration,
@@ -19,9 +21,6 @@ import {
     trackLeaderboardViewed,
     trackReturningUserLogin
 } from '../lib/tracking';
-
-// --- COSTANTI DI STILE CAMPARI ---
-const CAMPARI_RED = '#E3001B';
 
 type GameState = 'LOADING' | 'PHONE_INPUT' | 'NAME_INPUT' | 'READY' | 'PLAYING' | 'RESULT' | 'ERROR';
 
@@ -52,6 +51,10 @@ function PlayContent() {
     const searchParams = useSearchParams();
     const token = searchParams.get('token');
 
+    // Tenant branding e contenuti
+    const branding = useBranding();
+    const content = useContent();
+
     // Stati
     const [gameState, setGameState] = useState<GameState>('LOADING');
     const [errorMessage, setErrorMessage] = useState('');
@@ -59,6 +62,7 @@ function PlayContent() {
     // Dati
     const [promotionId, setPromotionId] = useState('');
     const [prize, setPrize] = useState<PrizeAssignment | null>(null);
+    const [leaderboardEnabled, setLeaderboardEnabled] = useState(true); // Default true per retrocompatibilità
     // const [leaderboard, setLeaderboard] = useState<any[]>([]); // Rimosso
     // const [finalResult, setFinalResult] = useState<PlayResult | null>(null); // Rimosso uso diretto
 
@@ -205,6 +209,7 @@ function PlayContent() {
                 }
 
                 setPromotionId(data.promotionId);
+                setLeaderboardEnabled(data.leaderboardEnabled ?? true);
 
                 // TRACKING: ViewContent quando l'utente vede la pagina di gioco
                 trackViewContent(data.promotionId);
@@ -301,7 +306,7 @@ function PlayContent() {
                 // data contiene { isWinner, prizeAssignment }
                 if (data.isWinner) {
                     setPrize(data.prizeAssignment);
-                    confetti({ particleCount: 200, spread: 90, origin: { y: 0.6 }, colors: ['#E3001B', '#FFFFFF'] });
+                    confetti({ particleCount: 200, spread: 90, origin: { y: 0.6 }, colors: [branding.colorPrimary, '#FFFFFF'] });
 
                     // TRACKING: Vincita premio
                     trackGameResult({
@@ -340,24 +345,29 @@ function PlayContent() {
         setModalOpen(true);
     };
 
-    // --- DESIGN SYSTEM ---
+    // --- DESIGN SYSTEM (dinamico da tenant branding) ---
     const bgStyle = {
-        backgroundColor: CAMPARI_RED,
-        backgroundImage: `url('/bottiglia.png')`,
+        backgroundColor: branding.colorPrimary,
+        backgroundImage: branding.backgroundUrl ? `url('${branding.backgroundUrl}')` : `url('/bottiglia.png')`,
         backgroundSize: '80px',
         backgroundRepeat: 'repeat',
-        backgroundBlendMode: 'soft-light',
+        backgroundBlendMode: 'soft-light' as const,
     };
 
     return (
         <div style={bgStyle} className="min-h-screen font-sans text-white pb-12 flex flex-col items-center overflow-x-hidden">
             <LegalModal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={modalContent.title} content={modalContent.text} />
 
+            {/* LANGUAGE SELECTOR */}
+            <div className="fixed top-4 right-4 z-50">
+                <LanguageSelector />
+            </div>
+
             {/* HEADER */}
             <header className="pt-8 pb-4 z-10 w-full max-w-xs mx-auto">
                 <img
-                    src="/camparisoda.png"
-                    alt="Campari Soda"
+                    src={branding.logoMainUrl || '/camparisoda.png'}
+                    alt="Logo"
                     className="w-48 mx-auto drop-shadow-md"
                     onError={(e) => e.currentTarget.style.display = 'none'}
                 />
@@ -368,8 +378,13 @@ function PlayContent() {
                 {/* STEP 1: INSERIMENTO TELEFONO */}
                 {gameState === 'PHONE_INPUT' && (
                     <div className="animate-fade-in bg-white text-black p-8 rounded-none border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-                        <h2 className="text-3xl font-bold mb-2 uppercase text-center tracking-tighter">Unisciti<br />al Rito</h2>
-                        <p className="text-gray-500 text-center text-sm mb-6 font-medium">Inserisci il tuo numero di cellulare</p>
+                        <h2 className="text-3xl font-bold mb-2 uppercase text-center tracking-tighter" dangerouslySetInnerHTML={{ __html: content.landingTitle.replace('\n', '<br />') }} />
+                        {content.landingSubtitle && (
+                            <p className="text-gray-500 text-center text-sm mb-6 font-medium">{content.landingSubtitle}</p>
+                        )}
+                        {!content.landingSubtitle && (
+                            <p className="text-gray-500 text-center text-sm mb-6 font-medium">{content.labelPhone}</p>
+                        )}
                         <div className="space-y-5">
                             <input
                                 type="tel"
@@ -383,7 +398,8 @@ function PlayContent() {
                             <button
                                 onClick={() => checkPhone(phone)}
                                 disabled={!phone.trim()}
-                                className="w-full bg-black text-white font-bold text-xl py-4 hover:bg-[#E3001B] hover:text-white transition-colors uppercase tracking-widest border-2 border-transparent hover:border-white disabled:bg-gray-300 disabled:cursor-not-allowed"
+                                style={{ '--hover-bg': branding.colorPrimary } as React.CSSProperties}
+                                className="w-full bg-black text-white font-bold text-xl py-4 hover:bg-[var(--hover-bg)] hover:text-white transition-colors uppercase tracking-widest border-2 border-transparent hover:border-white disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
                                 CONTINUA
                             </button>
@@ -404,8 +420,8 @@ function PlayContent() {
                                 </div>
                                 <form onSubmit={handleRegistrationSubmit} className="space-y-5">
                                     <div className="space-y-4">
-                                        <input type="text" required value={firstName} onChange={e => setFirstName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder="NOME" />
-                                        <input type="text" required value={lastName} onChange={e => setLastName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder="COGNOME" />
+                                        <input type="text" required value={firstName} onChange={e => setFirstName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder={content.labelFirstName.toUpperCase()} />
+                                        <input type="text" required value={lastName} onChange={e => setLastName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder={content.labelLastName.toUpperCase()} />
                                     </div>
                                     <div className="space-y-3 text-sm font-bold">
                                         <label className="flex items-start gap-3 text-gray-400">
@@ -413,8 +429,8 @@ function PlayContent() {
                                             <span><button type="button" onClick={() => openLegal('terms')} className="underline">Regolamento</button> e <button type="button" onClick={() => openLegal('privacy')} className="underline">Privacy</button> già accettati</span>
                                         </label>
                                     </div>
-                                    <button type="submit" className="w-full bg-[#E3001B] text-white font-bold text-xl py-4 hover:bg-black hover:text-white transition-colors uppercase tracking-widest border-2 border-transparent hover:border-white">
-                                        GIOCA
+                                    <button type="submit" style={{ backgroundColor: branding.colorPrimary }} className="w-full text-white font-bold text-xl py-4 hover:bg-black hover:text-white transition-colors uppercase tracking-widest border-2 border-transparent hover:border-white">
+                                        {content.landingCtaText}
                                     </button>
                                     <button type="button" onClick={() => { setExistingUser(null); setAcceptTerms(false); setGameState('PHONE_INPUT'); }} className="w-full text-gray-400 text-xs underline">
                                         Non sono io, cambia numero
@@ -424,25 +440,25 @@ function PlayContent() {
                         ) : (
                             // NUOVO UTENTE
                             <>
-                                <h2 className="text-3xl font-bold mb-2 uppercase text-center tracking-tighter">Come ti chiami?</h2>
+                                <h2 className="text-3xl font-bold mb-2 uppercase text-center tracking-tighter">{content.formTitle}</h2>
                                 <p className="text-gray-500 text-center text-sm mb-6 font-medium">Completa la registrazione</p>
                                 <form onSubmit={handleRegistrationSubmit} className="space-y-5">
                                     <div className="space-y-4">
-                                        <input type="text" required value={firstName} onChange={e => setFirstName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder="NOME" autoFocus />
-                                        <input type="text" required value={lastName} onChange={e => setLastName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder="COGNOME" />
+                                        <input type="text" required value={firstName} onChange={e => setFirstName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder={content.labelFirstName.toUpperCase()} autoFocus />
+                                        <input type="text" required value={lastName} onChange={e => setLastName(e.target.value)} className="w-full border-b-2 border-black bg-gray-50 p-3 font-bold focus:outline-none focus:bg-red-50" placeholder={content.labelLastName.toUpperCase()} />
                                     </div>
                                     <div className="space-y-3 text-sm font-bold">
                                         <label className="flex items-start gap-3 cursor-pointer">
                                             <input type="checkbox" required checked={acceptTerms} onChange={e => setAcceptTerms(e.target.checked)} className="mt-1 w-5 h-5 accent-black" />
-                                            <span>Accetto <button type="button" onClick={() => openLegal('terms')} className="underline">Regolamento</button> e <button type="button" onClick={() => openLegal('privacy')} className="underline">Privacy</button></span>
+                                            <span>{content.consentPrivacy}</span>
                                         </label>
                                         <label className="flex items-start gap-3 cursor-pointer">
                                             <input type="checkbox" checked={acceptMarketing} onChange={e => setAcceptMarketing(e.target.checked)} className="mt-1 w-5 h-5 accent-black" />
-                                            <span>Marketing (Opzionale)</span>
+                                            <span>{content.consentMarketing}</span>
                                         </label>
                                     </div>
-                                    <button type="submit" className="w-full bg-black text-white font-bold text-xl py-4 hover:bg-[#E3001B] hover:text-white transition-colors uppercase tracking-widest border-2 border-transparent hover:border-white">
-                                        AVANTI
+                                    <button type="submit" style={{ '--hover-bg': branding.colorPrimary } as React.CSSProperties} className="w-full bg-black text-white font-bold text-xl py-4 hover:bg-[var(--hover-bg)] hover:text-white transition-colors uppercase tracking-widest border-2 border-transparent hover:border-white">
+                                        {content.formSubmitText}
                                     </button>
                                     <button type="button" onClick={() => setGameState('PHONE_INPUT')} className="w-full text-gray-400 text-xs underline">
                                         Torna indietro
@@ -456,13 +472,13 @@ function PlayContent() {
                 {/* 2. READY */}
                 {gameState === 'READY' && (
                     <div className="text-center animate-fade-in bg-white p-8 border-4 border-black shadow-[8px_8px_0px_0px_rgba(255,255,255,0.5)]">
-                        <div className="w-24 h-24 bg-[#E3001B] rounded-full mx-auto mb-6 flex items-center justify-center text-5xl shadow-inner border-4 border-black">
+                        <div style={{ backgroundColor: branding.colorPrimary }} className="w-24 h-24 rounded-full mx-auto mb-6 flex items-center justify-center text-5xl shadow-inner border-4 border-black">
                             🎲
                         </div>
                         <h2 className="text-4xl font-bold uppercase tracking-tighter text-black mb-2 leading-none">CIAO<br />{firstName}!</h2>
                         <p className="text-gray-600 font-bold mb-8 uppercase text-sm tracking-widest">Il tuo momento è adesso.</p>
-                        <button onClick={handlePlay} className="w-full bg-[#E3001B] text-white text-2xl font-bold py-5 border-4 border-black hover:bg-black hover:text-white transition-all uppercase tracking-widest shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none">
-                            GIOCA ORA
+                        <button onClick={handlePlay} style={{ backgroundColor: branding.colorPrimary }} className="w-full text-white text-2xl font-bold py-5 border-4 border-black hover:bg-black hover:text-white transition-all uppercase tracking-widest shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none">
+                            {content.landingCtaText}
                         </button>
                     </div>
                 )}
@@ -481,9 +497,9 @@ function PlayContent() {
                         {prize ? (
                             // WIN
                             <div className="bg-white text-black border-4 border-black p-6 shadow-[10px_10px_0px_0px_rgba(0,0,0,0.3)] mb-8 relative flex flex-col items-center text-center">
-                                <h2 className="text-5xl font-bold uppercase tracking-tighter mb-2 text-[#E3001B]">HAI VINTO!</h2>
+                                <h2 style={{ color: branding.colorPrimary }} className="text-5xl font-bold uppercase tracking-tighter mb-2">{content.winTitle}</h2>
                                 <p className="text-xl font-bold uppercase border-b-4 border-black inline-block pb-1 mb-6">
-                                    {prize.prize_type?.name}
+                                    {content.winMessage.replace('{prize_name}', prize.prize_type?.name || '')}
                                 </p>
                                 <div className="bg-black p-4 mb-4 border-4 border-black flex flex-col items-center">
                                     <div className="bg-white p-2">
@@ -494,32 +510,34 @@ function PlayContent() {
                                     </p>
                                 </div>
                                 <p className="text-xs font-bold uppercase text-gray-500 max-w-[250px] leading-tight">
-                                    MOSTRA IL CODICE AD UN CAMERIERE PER RITIRARE IL TUO PREMIO
+                                    {content.winInstructions || 'MOSTRA IL CODICE AD UN CAMERIERE PER RITIRARE IL TUO PREMIO'}
                                 </p>
                             </div>
                         ) : (
                             // LOSE
                             <div className="bg-black text-white border-4 border-white p-8 text-center shadow-[8px_8px_0px_0px_rgba(255,255,255,0.2)] mb-8">
-                                <h2 className="text-4xl font-bold uppercase tracking-tighter mb-4 text-[#E3001B]">NON HAI VINTO</h2>
+                                <h2 style={{ color: branding.colorPrimary }} className="text-4xl font-bold uppercase tracking-tighter mb-4">{content.loseTitle}</h2>
                                 <p className="font-bold text-lg mb-6 leading-relaxed uppercase">
-                                    La fortuna era distratta, ma un Camparino è sempre una vittoria.
+                                    {content.loseMessage}
                                 </p>
-                                <p className="text-sm font-light tracking-wide">
-                                    Ritenta con il prossimo Camparino 😜
-                                </p>
+                                {content.thankYouMessage && (
+                                    <p className="text-sm font-light tracking-wide">
+                                        {content.thankYouMessage}
+                                    </p>
+                                )}
                             </div>
                         )}
 
-                        {/* CLASSIFICA LIVE */}
-                        <div className="bg-white text-black p-4 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-                            <h3 className="text-center font-bold uppercase border-b-2 border-black pb-2 mb-2 tracking-widest">Classifica Live</h3>
-
-                            {/* FIX: Uso corretto del componente con le nuove props */}
-                            <LiveLeaderboard
-                                promotionId={Number(promotionId)}
-                                currentCustomerId={Number(customerId)}
-                            />
-                        </div>
+                        {/* CLASSIFICA LIVE (solo se abilitata) */}
+                        {leaderboardEnabled && (
+                            <div className="bg-white text-black p-4 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+                                <h3 className="text-center font-bold uppercase border-b-2 border-black pb-2 mb-2 tracking-widest">Classifica Live</h3>
+                                <LiveLeaderboard
+                                    promotionId={Number(promotionId)}
+                                    currentCustomerId={Number(customerId)}
+                                />
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -551,7 +569,7 @@ function PlayContent() {
 
 export default function PlayPage() {
     return (
-        <Suspense fallback={<div className="min-h-screen bg-[#E3001B] flex items-center justify-center text-white font-bold uppercase">Caricamento...</div>}>
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-white font-bold uppercase" style={{ backgroundColor: 'var(--color-primary, #b42a28)' }}>Caricamento...</div>}>
             <PlayContent />
         </Suspense>
     );
