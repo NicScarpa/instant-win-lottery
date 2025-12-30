@@ -6,7 +6,8 @@
     "seed": "ts-node prisma/seed.ts"
   },
   "scripts": {
-    "build": "prisma db push --skip-generate && tsc && cp -r assets dist/ && cp -r fonts dist/",
+    "prebuild": "node -e \"const fs=require('fs'); const isRailway=process.env.RAILWAY_ENVIRONMENT||process.env.DATABASE_URL?.includes('postgresql'); const schema=isRailway?'schema.postgresql.prisma':'schema.sqlite.prisma'; fs.copyFileSync('prisma/'+schema,'prisma/schema.prisma'); console.log('Using schema:',schema);\"",
+    "build": "prisma generate && prisma db push --skip-generate && tsc && cp -r assets dist/ && cp -r fonts dist/",
     "build:local": "dotenv -e .env -o -- npm run build",
     "start": "node dist/server.js",
     "dev": "ts-node src/server.ts",
