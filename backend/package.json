@@ -6,7 +6,7 @@
     "seed": "ts-node prisma/seed.ts"
   },
   "scripts": {
-    "build": "dotenv -e .env -- prisma db push --skip-generate && tsc && cp -r assets dist/ && cp -r fonts dist/",
+    "build": "dotenv -e .env -o -- prisma db push --skip-generate && tsc && cp -r assets dist/ && cp -r fonts dist/",
     "start": "node dist/server.js",
     "dev": "ts-node src/server.ts",
     "postinstall": "prisma generate",
